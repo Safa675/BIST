@@ -1,0 +1,147 @@
+regime_detection:
+  description: >
+    Detect the current BIST market regime before any stock analysis begins.
+    1. Fetch XU100 index data and USD/TRY exchange rate
+    2. Calculate realized volatility (20-day) and classify: Low (<17%), Mid (17-28%), High (28-40%), Stress (>40%)
+    3. Determine trend direction from 20-day and 120-day returns (Up >1.5%, Down <-1.5%, Sideways)
+    4. Assess risk regime via USD/TRY momentum (Risk-On if TRY strengthening, Risk-Off if weakening)
+    5. Map to final regime: Bull, Recovery, Choppy, Bear, or Stress
+    6. Determine equity allocation: Bull/Recovery=100%, Choppy=50%, Bear/Stress=0% (gold hedge)
+    This regime determination is CRITICAL as it controls the entire fund's positioning.
+  expected_output: >
+    A regime report containing:
+    - Current regime: Bull / Recovery / Choppy / Bear / Stress
+    - Equity allocation percentage (0%, 50%, or 100%)
+    - Volatility regime and realized vol level
+    - Trend direction (short-term and long-term)
+    - Risk regime (Risk-On / Risk-Off / Neutral)
+    - USD/TRY momentum assessment
+    - XU100 current level and recent performance
+    - Recommendation for portfolio positioning
+    - If Bear or Stress: recommend full XAU/TRY hedge and skip stock analysis
+  agent: regime_analyst
+
+technical_analysis:
+  description: >
+    Perform technical analysis on each BIST stock in {tickers}.
+    For each stock:
+    1. Fetch price data and calculate all technical indicators
+    2. RSI(14): Check overbought (>70) / oversold (<30) conditions
+    3. MACD: Determine if MACD line is above/below signal line
+    4. Bollinger Bands: Is price near upper/lower band?
+    5. SMA crossover: Calculate SMA(10)/SMA(30) score (positive = bullish)
+    6. Donchian Channel (20-day): Where is price relative to the channel?
+    7. Momentum (12-1): Calculate 12-month return excluding last month, adjust by downside vol
+    8. Provide a combined technical score and outlook for each stock
+    Remember to add the .IS suffix when looking up BIST stocks.
+  expected_output: >
+    A technical analysis report for each stock in {tickers}:
+    - Current price
+    - RSI reading and signal (overbought/oversold/neutral)
+    - MACD trend (bullish/bearish) and histogram
+    - Bollinger Band position
+    - SMA crossover signal and score
+    - Donchian channel signal
+    - Momentum (12-1) reading
+    - Combined technical outlook: BULLISH / BEARISH / NEUTRAL
+    - Confidence: HIGH / MEDIUM / LOW
+    - Ranking of stocks from most to least technically attractive
+  agent: technical_analyst
+
+fundamental_analysis:
+  description: >
+    Evaluate the fundamentals of each BIST stock in {tickers}.
+    For each stock:
+    1. Get financial statements and key ratios
+    2. Assess VALUE using composite score: E/P, FCF/P, OCF/EV, S/P, EBITDA/EV
+    3. Assess PROFITABILITY: (Operating Income + Gross Profit) / (2 * Total Assets)
+    4. Check balance sheet health: debt/equity, current ratio, cash position
+    5. Compare to BIST averages and sector peers
+    6. Determine if the stock is undervalued, fairly valued, or overvalued
+    Remember BIST stocks use the .IS suffix on Yahoo Finance.
+  expected_output: >
+    A fundamental analysis report for each stock in {tickers}:
+    - Key financial metrics (revenue, earnings, EBITDA)
+    - Valuation ratios (PE, PB, PS, EV/EBITDA) vs BIST average
+    - Profitability metrics (margins, ROE, ROA)
+    - Balance sheet assessment (leverage, liquidity)
+    - Value score assessment
+    - Fundamental outlook: BULLISH / BEARISH / NEUTRAL
+    - Confidence: HIGH / MEDIUM / LOW
+    - Ranking of stocks from most to least fundamentally attractive
+  agent: fundamental_analyst
+
+risk_assessment:
+  description: >
+    Evaluate risk for each stock in {tickers} and determine position sizing.
+    Use the analysis from the regime, technical, and fundamental teams.
+    For each stock:
+    1. Calculate downside volatility (annualized) and compare to 20% target
+    2. Calculate volatility scaling factor: target_vol / realized_downside_vol (floor 0.10, cap 1.0)
+    3. Calculate maximum drawdown over the past year
+    4. Calculate beta vs XU100 index
+    5. Set stop-loss at 15% below current price (matching portfolio engine)
+    6. Recommend position weight (max 25% per position)
+    7. Apply inverse downside vol weighting (lower vol stocks get higher weight)
+    8. Factor in current regime for overall allocation
+  expected_output: >
+    A risk report for each stock in {tickers}:
+    - Downside volatility (annualized)
+    - Volatility scaling factor (for vol targeting)
+    - Maximum drawdown (1 year)
+    - Beta vs XU100
+    - Risk rating: LOW / MEDIUM / HIGH
+    - Recommended position weight (% of equity sleeve)
+    - Stop-loss price (15% below current)
+    - Overall portfolio risk level considering current regime
+    - Inverse downside vol weights for all stocks combined
+  agent: risk_manager
+
+portfolio_recommendation:
+  description: >
+    As the Chief Investment Officer, synthesize ALL analyses to produce the
+    final portfolio recommendation for {tickers}.
+
+    Consider:
+    1. Current market regime and equity/gold allocation split
+    2. Technical signals and rankings
+    3. Fundamental value and quality rankings
+    4. Risk metrics and position sizing from risk manager
+    5. Select top stocks (up to 20 in Bull, 10 in Choppy, 0 in Bear/Stress)
+    6. Apply inverse downside vol weights (lower vol = higher allocation)
+    7. Enforce 25% max position weight and 15% stop-loss
+    8. Determine gold hedge allocation (XAU/TRY) for non-equity portion
+
+    The output must be actionable with specific prices and sizes.
+  expected_output: >
+    BIST HEDGE FUND PORTFOLIO RECOMMENDATION
+
+    REGIME STATUS:
+    - Current regime and allocation split (equity % / gold %)
+
+    PORTFOLIO TABLE:
+    | Ticker | Action | Weight % | Entry Price | Target | Stop-Loss | Rationale |
+    (for each recommended stock)
+
+    GOLD HEDGE:
+    - XAU/TRY allocation percentage and current price
+
+    PER-STOCK DETAIL:
+    For each ticker in the portfolio:
+    - Action: BUY / HOLD / SELL / AVOID
+    - Conviction: HIGH / MEDIUM / LOW
+    - Position weight (% of total portfolio)
+    - Entry price
+    - Target price and expected return %
+    - Stop-loss price (15% rule)
+    - Key rationale (technical + fundamental + risk summary)
+
+    PORTFOLIO SUMMARY:
+    - Total equity exposure %
+    - Total gold hedge %
+    - Cash reserve %
+    - Portfolio expected return range
+    - Maximum portfolio drawdown estimate
+    - Rebalancing schedule (monthly for momentum, quarterly for value)
+    - Key risks to monitor (regime change triggers)
+  agent: portfolio_manager
