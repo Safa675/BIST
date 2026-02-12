@@ -42,9 +42,22 @@ SIGNAL_CONFIG = {
         'last_test_year': 2026,
     },
 
+    # Make axes capture distinct cross-sectional information by residualizing
+    # each later axis against earlier ones date-by-date.
+    'axis_orthogonalization': {
+        'enabled': True,
+        'min_overlap': 20,
+        'epsilon': 1e-8,
+        # Optional explicit priority order.
+        # If omitted, uses axis definition order in the signal builder.
+        # 'order': ['size', 'value', 'profitability', 'investment', 'momentum', 'risk',
+        #           'quality', 'liquidity', 'trading_intensity', 'sentiment',
+        #           'fundmom', 'carry', 'defensive'],
+    },
+
     'portfolio_options': {
         # Regime overlay
-        'use_regime_filter': False,
+        'use_regime_filter': True,
 
         # Vol targeting
         'use_vol_targeting': False,

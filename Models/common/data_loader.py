@@ -7,19 +7,17 @@ and caches them in memory for use by all factor models.
 
 from pathlib import Path
 import pandas as pd
-import numpy as np
-from typing import Dict, Tuple
-import sys
+from typing import Dict
+import json
 import warnings
 warnings.filterwarnings('ignore')
 
-# Add regime filter to path
+# Regime filter directory candidates (support both naming schemes)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-REGIME_FILTER_DIR = PROJECT_ROOT / "Regime Filter"
-if str(REGIME_FILTER_DIR) not in sys.path:
-    sys.path.insert(0, str(REGIME_FILTER_DIR))
-
-from models.ensemble_regime import EnsembleRegimeModel
+REGIME_DIR_CANDIDATES = [
+    PROJECT_ROOT / "Simple Regime Filter",
+    PROJECT_ROOT / "Regime Filter",
+]
 
 
 class DataLoader:
@@ -38,6 +36,7 @@ class DataLoader:
         self._open_df = None
         self._volume_df = None
         self._regime_series = None
+        self._regime_allocations = None
         self._xautry_prices = None
         self._xu100_prices = None
         self._fundamentals_parquet = None
@@ -244,23 +243,86 @@ class DataLoader:
                 )
         return self._isyatirim_parquet
     
-    def load_regime_predictions(self, features: pd.DataFrame) -> pd.Series:
-        """Load regime model and generate predictions"""
+    def load_regime_predictions(self, features: pd.DataFrame | None = None) -> pd.Series:
+        """
+        Load regime labels from regime filter outputs.
+
+        Args:
+            features: Unused legacy argument kept for backward compatibility.
+        """
+        del features  # Backward compatibility placeholder
+
         if self._regime_series is None:
-            print("\n🎯 Loading regime model...")
-            ensemble = EnsembleRegimeModel.load(self.regime_model_dir)
+            print("\n🎯 Loading regime labels...")
+            candidate_files = [p / "outputs" / "regime_features.csv" for p in REGIME_DIR_CANDIDATES]
+            regime_file = next((f for f in candidate_files if f.exists()), candidate_files[0])
 
-            print("  Generating regime predictions...")
-            results = ensemble.predict(features, return_details=False)
-            self._regime_series = results['ensemble_prediction']
+            if not regime_file.exists():
+                candidate_dirs = ", ".join(str(p / "outputs") for p in REGIME_DIR_CANDIDATES)
+                raise FileNotFoundError(
+                    f"Regime file not found in expected locations: {candidate_dirs}\n"
+                    "Run the simplified regime pipeline to generate outputs."
+                )
 
-            print(f"  ✅ Generated {len(self._regime_series)} regime predictions")
+            regime_df = pd.read_csv(regime_file)
+            if regime_df.empty:
+                raise ValueError(f"Regime file is empty: {regime_file}")
+
+            date_col = next((c for c in ("Date", "date", "DATE") if c in regime_df.columns), regime_df.columns[0])
+            regime_df[date_col] = pd.to_datetime(regime_df[date_col], errors="coerce")
+            regime_df = regime_df.dropna(subset=[date_col]).set_index(date_col).sort_index()
+
+            regime_col = next(
+                (c for c in ("regime_label", "simplified_regime", "regime", "detailed_regime") if c in regime_df.columns),
+                None,
+            )
+            if regime_col is None:
+                raise ValueError(
+                    "No regime column found in regime file. "
+                    "Expected one of: regime_label, simplified_regime, regime, detailed_regime."
+                )
+
+            self._regime_series = regime_df[regime_col].dropna().astype(str)
+            if self._regime_series.empty:
+                raise ValueError(f"No valid regime rows found in: {regime_file}")
+
+            # Load regime->allocation mapping from simplified regime export.
+            # This keeps portfolio sizing aligned with whichever regime config was last exported.
+            self._regime_allocations = {}
+            labels_file = regime_file.parent / "regime_labels.json"
+            if labels_file.exists():
+                try:
+                    labels = json.loads(labels_file.read_text(encoding="utf-8"))
+                    for payload in labels.values():
+                        if not isinstance(payload, dict):
+                            continue
+                        regime = str(payload.get("regime", "")).strip()
+                        alloc = payload.get("allocation")
+                        if regime and alloc is not None:
+                            try:
+                                self._regime_allocations[regime] = float(alloc)
+                            except (TypeError, ValueError):
+                                continue
+                except Exception as exc:
+                    print(f"  ⚠️  Could not parse regime allocations from {labels_file.name}: {exc}")
+
+            print(f"  ✅ Loaded {len(self._regime_series)} regime labels")
             print("\n  Regime distribution:")
             for regime, count in self._regime_series.value_counts().items():
                 pct = count / len(self._regime_series) * 100
                 print(f"    {regime}: {count} days ({pct:.1f}%)")
+            if self._regime_allocations:
+                print("  Regime allocations:")
+                for regime, alloc in sorted(self._regime_allocations.items()):
+                    print(f"    {regime}: {alloc:.2f}")
 
         return self._regime_series
+
+    def load_regime_allocations(self) -> Dict[str, float]:
+        """Get regime allocation mapping loaded from regime_labels.json when available."""
+        if self._regime_series is None:
+            self.load_regime_predictions()
+        return dict(self._regime_allocations or {})
     
     def load_xautry_prices(
         self,

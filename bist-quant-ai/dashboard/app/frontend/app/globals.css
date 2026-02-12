@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 2 6 23;
+    --foreground: 248 250 252;
+  }
+
+  body {
+    @apply bg-dark-950 text-dark-50;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-500 hover:bg-primary-600 text-white font-medium py-3 px-6 rounded-xl transition-all duration-200 shadow-lg shadow-primary-500/20 hover:shadow-primary-500/40;
+  }
+
+  .btn-secondary {
+    @apply bg-dark-800 hover:bg-dark-700 text-white font-medium py-3 px-6 rounded-xl transition-all duration-200 border border-dark-700;
+  }
+
+  .card {
+    @apply bg-dark-900/50 backdrop-blur-sm border border-dark-800 rounded-2xl p-6;
+  }
+
+  .card-hover {
+    @apply card hover:border-primary-500/50 transition-all duration-300;
+  }
+
+  .input {
+    @apply bg-dark-800 border border-dark-700 rounded-xl px-4 py-3 text-white placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-400 to-primary-600;
+  }
+
+  .gradient-bg {
+    @apply bg-gradient-to-br from-primary-500/10 via-transparent to-primary-600/5;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-dark-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-dark-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-dark-600;
+}
+
+/* Glow effects */
+.glow {
+  box-shadow: 0 0 40px rgba(14, 165, 233, 0.15);
+}
+
+.glow-success {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+.glow-danger {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);
+}

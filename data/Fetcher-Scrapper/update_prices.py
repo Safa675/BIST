@@ -49,20 +49,50 @@ def last_date_in_csv(path: Path, date_col: str = "Date") -> dt.date:
     return df[date_col].max().date()
 
 
-def fetch_bist_tickers() -> list[str]:
-    tables = pd.read_html(MNYET_URL)
-    if not tables:
-        raise RuntimeError(f"No tables found at {MNYET_URL}")
+def _fallback_bist_tickers_from_existing() -> list[str]:
+    """Fallback ticker universe from local historical file."""
+    if not BIST_PRICES.exists():
+        return []
+
+    try:
+        existing = pd.read_csv(BIST_PRICES, usecols=["Ticker"])
+    except Exception:
+        return []
+
     tickers = (
-        tables[0]["Hisseler"]
-        .astype(str)
-        .str.split()
-        .str[0]
+        existing["Ticker"]
         .dropna()
+        .astype(str)
+        .str.replace(".IS", "", regex=False)
+        .str.upper()
         .unique()
         .tolist()
     )
     return sorted(t for t in tickers if t.isalpha())
+
+
+def fetch_bist_tickers() -> list[str]:
+    try:
+        tables = pd.read_html(MNYET_URL)
+        if not tables:
+            raise RuntimeError(f"No tables found at {MNYET_URL}")
+        tickers = (
+            tables[0]["Hisseler"]
+            .astype(str)
+            .str.split()
+            .str[0]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        return sorted(t for t in tickers if t.isalpha())
+    except Exception as exc:
+        print(f"  Warning: could not fetch ticker list from {MNYET_URL}: {exc}")
+        fallback = _fallback_bist_tickers_from_existing()
+        if fallback:
+            print(f"  Using {len(fallback)} tickers from local price history fallback")
+            return fallback
+        raise RuntimeError("Ticker universe fetch failed and no local fallback is available") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +325,7 @@ def update_xau_try(dry_run: bool = False) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Incrementally update BIST price data files."
     )
@@ -310,14 +340,32 @@ def main() -> None:
     print(f"BIST DATA UPDATER  —  {dt.datetime.now():%Y-%m-%d %H:%M}")
     print(f"{'=' * 60}")
 
-    update_bist_prices(dry_run=args.dry_run)
-    update_xu100_prices(dry_run=args.dry_run)
-    update_xau_try(dry_run=args.dry_run)
+    failures: list[tuple[str, Exception]] = []
+
+    steps = [
+        ("BIST STOCK PRICES", update_bist_prices),
+        ("XU100 INDEX PRICES", update_xu100_prices),
+        ("XAU/TRY PRICES", update_xau_try),
+    ]
+    for label, step in steps:
+        try:
+            step(dry_run=args.dry_run)
+        except Exception as exc:
+            failures.append((label, exc))
+            print(f"\n  ERROR in {label}: {exc}")
 
     print("\n" + "=" * 60)
+    if failures:
+        print(f"UPDATES COMPLETED WITH {len(failures)} FAILURE(S)")
+        for label, exc in failures:
+            print(f"  - {label}: {exc}")
+        print("=" * 60)
+        return 1
+
     print("ALL UPDATES COMPLETE")
     print("=" * 60)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -34,6 +34,31 @@ class TCMBRateFetcher:
             
         self.cache_file = self.cache_dir / "tcmb_deposit_rates.csv"
         self.rates_data = None
+
+    @staticmethod
+    def _required_cache_end(end_ts: pd.Timestamp, max_stale_days: int = 7) -> pd.Timestamp:
+        """Required minimum cache end date for requested window."""
+        now = pd.Timestamp.now().normalize()
+        cutoff = now - pd.Timedelta(days=max_stale_days)
+        return end_ts if end_ts < cutoff else end_ts - pd.Timedelta(days=max_stale_days)
+
+    @classmethod
+    def _cache_covers_window(
+        cls,
+        cached_index: pd.DatetimeIndex,
+        start_ts: pd.Timestamp,
+        end_ts: pd.Timestamp,
+        max_stale_days: int = 7,
+    ) -> bool:
+        if len(cached_index) == 0:
+            return False
+        idx = pd.DatetimeIndex(cached_index).dropna().sort_values()
+        if len(idx) == 0:
+            return False
+        if idx.min() > start_ts:
+            return False
+        required_end = cls._required_cache_end(end_ts, max_stale_days=max_stale_days)
+        return idx.max() >= required_end
         
     def fetch_rates(self, start_date='2013-01-01', end_date=None, force_refresh=False):
         """
@@ -47,11 +72,22 @@ class TCMBRateFetcher:
         Returns:
             DataFrame with Date index and deposit_rate column
         """
+        requested_start = pd.to_datetime(start_date).normalize()
+        requested_end = (
+            pd.to_datetime(end_date).normalize()
+            if end_date is not None
+            else pd.Timestamp.now().normalize()
+        )
+
         # Check cache first
         if not force_refresh and self.cache_file.exists():
-            print(f"Loading cached TCMB rates from {self.cache_file}")
-            self.rates_data = pd.read_csv(self.cache_file, index_col=0, parse_dates=True)
-            return self.rates_data
+            cached = pd.read_csv(self.cache_file, index_col=0, parse_dates=True).sort_index()
+            if self._cache_covers_window(cached.index, requested_start, requested_end):
+                print(f"Loading cached TCMB rates from {self.cache_file}")
+                windowed = cached[(cached.index >= requested_start) & (cached.index <= requested_end)]
+                if not windowed.empty:
+                    self.rates_data = windowed
+                    return self.rates_data
         
         # Try to fetch from EVDS
         try:

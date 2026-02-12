@@ -70,6 +70,45 @@ class TCMBDataFetcher:
         self.data = {}
         self._evds_client = None
 
+    @staticmethod
+    def _required_cache_end(end_ts: pd.Timestamp, max_stale_days: int = 7) -> pd.Timestamp:
+        """Required minimum cache end date for requested window."""
+        now = pd.Timestamp.now().normalize()
+        cutoff = now - pd.Timedelta(days=max_stale_days)
+        return end_ts if end_ts < cutoff else end_ts - pd.Timedelta(days=max_stale_days)
+
+    @classmethod
+    def _cache_covers_window(
+        cls,
+        cached_index: pd.DatetimeIndex,
+        start_date: str,
+        end_date: str,
+        max_stale_days: int = 7,
+    ) -> bool:
+        if len(cached_index) == 0:
+            return False
+        idx = pd.DatetimeIndex(cached_index).dropna().sort_values()
+        if len(idx) == 0:
+            return False
+
+        start_ts = pd.to_datetime(start_date).normalize()
+        end_ts = pd.to_datetime(end_date).normalize()
+        if idx.min() > start_ts:
+            return False
+
+        required_end = cls._required_cache_end(end_ts, max_stale_days=max_stale_days)
+        return idx.max() >= required_end
+
+    @staticmethod
+    def _slice_series_to_window(series: pd.Series | None, start_date: str, end_date: str) -> pd.Series | None:
+        if series is None:
+            return None
+        start_ts = pd.to_datetime(start_date).normalize()
+        end_ts = pd.to_datetime(end_date).normalize()
+        out = series.sort_index()
+        out = out[(out.index >= start_ts) & (out.index <= end_ts)]
+        return out if len(out) > 0 else None
+
     def _get_evds_client(self):
         """Lazy initialization of EVDS client"""
         if self._evds_client is None:
@@ -138,13 +177,19 @@ class TCMBDataFetcher:
         if use_cache and cache_file.exists():
             print("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-            # Check if cache is recent enough
-            if len(cached) > 0 and cached.index[-1] >= pd.Timestamp(end_date) - pd.Timedelta(days=7):
-                self.data['yield_2y'] = cached.get('yield_2y')
-                self.data['yield_5y'] = cached.get('yield_5y')
-                self.data['yield_10y'] = cached.get('yield_10y')
-                print(f"  Loaded {len(cached)} observations from cache")
-                return
+            if self._cache_covers_window(cached.index, start_date, end_date):
+                y2 = self._slice_series_to_window(cached.get('yield_2y'), start_date, end_date)
+                y5 = self._slice_series_to_window(cached.get('yield_5y'), start_date, end_date)
+                y10 = self._slice_series_to_window(cached.get('yield_10y'), start_date, end_date)
+                if y2 is not None:
+                    self.data['yield_2y'] = y2
+                if y5 is not None:
+                    self.data['yield_5y'] = y5
+                if y10 is not None:
+                    self.data['yield_10y'] = y10
+                if any(x is not None for x in (y2, y5, y10)):
+                    print(f"  Loaded {len(cached)} observations from cache")
+                    return
 
         try:
             client = self._get_evds_client()
@@ -189,11 +234,16 @@ class TCMBDataFetcher:
         if use_cache and cache_file.exists():
             print("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-            if len(cached) > 0:
-                self.data['policy_rate'] = cached.get('policy_rate')
-                self.data['overnight_rate'] = cached.get('overnight_rate')
-                print(f"  Loaded {len(cached)} observations from cache")
-                return
+            if self._cache_covers_window(cached.index, start_date, end_date):
+                policy = self._slice_series_to_window(cached.get('policy_rate'), start_date, end_date)
+                overnight = self._slice_series_to_window(cached.get('overnight_rate'), start_date, end_date)
+                if policy is not None:
+                    self.data['policy_rate'] = policy
+                if overnight is not None:
+                    self.data['overnight_rate'] = overnight
+                if policy is not None or overnight is not None:
+                    print(f"  Loaded {len(cached)} observations from cache")
+                    return
 
         try:
             client = self._get_evds_client()
@@ -233,11 +283,16 @@ class TCMBDataFetcher:
         if use_cache and cache_file.exists():
             print("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-            if len(cached) > 0:
-                self.data['cpi_annual'] = cached.get('cpi_annual')
-                self.data['inflation_exp'] = cached.get('inflation_exp')
-                print(f"  Loaded {len(cached)} observations from cache")
-                return
+            if self._cache_covers_window(cached.index, start_date, end_date):
+                cpi = self._slice_series_to_window(cached.get('cpi_annual'), start_date, end_date)
+                infl_exp = self._slice_series_to_window(cached.get('inflation_exp'), start_date, end_date)
+                if cpi is not None:
+                    self.data['cpi_annual'] = cpi
+                if infl_exp is not None:
+                    self.data['inflation_exp'] = infl_exp
+                if cpi is not None or infl_exp is not None:
+                    print(f"  Loaded {len(cached)} observations from cache")
+                    return
 
         try:
             client = self._get_evds_client()

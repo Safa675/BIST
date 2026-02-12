@@ -49,6 +49,7 @@ from common.utils import (
     assert_panel_not_constant,
     coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
     raise_signal_data_error,
     sum_ttm,
@@ -111,6 +112,11 @@ VALUE_GROWTH_LOOKBACK_DAYS = 252
 
 # Quintile settings
 USE_QUINTILE_BUCKETS = True
+
+# Optional axis orthogonalization (cross-sectional, date-by-date)
+DEFAULT_ORTHOGONALIZE_AXES = False
+DEFAULT_ORTHOG_MIN_OVERLAP = 20
+DEFAULT_ORTHOG_EPSILON = 1e-8
 
 # Axis cache
 AXIS_CACHE_FILENAME = "multi_factor_axis_construction.parquet"
@@ -248,6 +254,143 @@ def _debug_axis_component_stats(
         f"axis={axis_name}: latest_bucket={latest_bucket}, spread_mean={spread_mean:.4%}, "
         f"spread_std={spread_std:.4%}, top={top_names}, bottom={bottom_names}",
     )
+
+
+def _mean_abs_pairwise_corr(
+    matrix: np.ndarray,
+    min_overlap: int,
+    epsilon: float,
+) -> float:
+    """Mean absolute pairwise correlation across axis columns for one date."""
+    if matrix.ndim != 2 or matrix.shape[1] < 2:
+        return np.nan
+
+    n_axes = matrix.shape[1]
+    corr_sum = 0.0
+    corr_count = 0
+
+    for left in range(n_axes):
+        x = matrix[:, left]
+        for right in range(left + 1, n_axes):
+            y = matrix[:, right]
+            overlap = np.isfinite(x) & np.isfinite(y)
+            if int(overlap.sum()) < min_overlap:
+                continue
+
+            xv = x[overlap]
+            yv = y[overlap]
+            xv = xv - xv.mean()
+            yv = yv - yv.mean()
+
+            denom = float(np.sqrt(np.dot(xv, xv) * np.dot(yv, yv)))
+            if not np.isfinite(denom) or denom <= epsilon:
+                continue
+
+            corr = float(np.dot(xv, yv) / denom)
+            corr_sum += abs(corr)
+            corr_count += 1
+
+    if corr_count == 0:
+        return np.nan
+    return corr_sum / corr_count
+
+
+def _orthogonalize_axis_raw_scores(
+    axis_raw_map: Dict[str, pd.DataFrame],
+    axis_order: list[str],
+    min_overlap: int = DEFAULT_ORTHOG_MIN_OVERLAP,
+    epsilon: float = DEFAULT_ORTHOG_EPSILON,
+) -> tuple[Dict[str, pd.DataFrame], Dict[str, object]]:
+    """Orthogonalize raw axis scores cross-sectionally date-by-date.
+
+    Uses sequential residualization (Gram-Schmidt style) in the supplied axis
+    order. Earlier axes are preserved; later axes keep only variation not
+    explained by earlier axes.
+    """
+    if not axis_order:
+        return axis_raw_map, {}
+
+    first_panel = axis_raw_map[axis_order[0]]
+    dates = first_panel.index
+    tickers = first_panel.columns
+    n_dates = len(dates)
+    n_tickers = len(tickers)
+    n_axes = len(axis_order)
+
+    standardized_arrays: list[np.ndarray] = []
+    for axis_name in axis_order:
+        panel = axis_raw_map[axis_name].reindex(index=dates, columns=tickers).astype(float)
+        standardized_arrays.append(cross_sectional_zscore(panel).to_numpy(dtype=float))
+
+    orth_arrays = [np.full((n_dates, n_tickers), np.nan, dtype=float) for _ in axis_order]
+    raw_daily_corr = np.full(n_dates, np.nan, dtype=float)
+    orth_daily_corr = np.full(n_dates, np.nan, dtype=float)
+
+    for date_idx in range(n_dates):
+        raw_day = np.column_stack([arr[date_idx, :] for arr in standardized_arrays])
+        raw_daily_corr[date_idx] = _mean_abs_pairwise_corr(raw_day, min_overlap, epsilon)
+
+        orth_day = np.full((n_tickers, n_axes), np.nan, dtype=float)
+
+        for axis_idx in range(n_axes):
+            residual = raw_day[:, axis_idx].copy()
+            if int(np.isfinite(residual).sum()) < 2:
+                continue
+
+            for prev_idx in range(axis_idx):
+                prev_axis = orth_day[:, prev_idx]
+                overlap = np.isfinite(residual) & np.isfinite(prev_axis)
+                if int(overlap.sum()) < min_overlap:
+                    continue
+
+                x = prev_axis[overlap]
+                y = residual[overlap]
+                denom = float(np.dot(x, x))
+                if not np.isfinite(denom) or denom <= epsilon:
+                    continue
+
+                beta = float(np.dot(x, y) / denom)
+                residual[overlap] = y - beta * x
+
+            valid = np.isfinite(residual)
+            n_valid = int(valid.sum())
+            if n_valid < 2:
+                continue
+
+            centered = residual[valid] - residual[valid].mean()
+            std = float(centered.std(ddof=1))
+            if not np.isfinite(std) or std <= epsilon:
+                continue
+
+            normalized = centered / std
+
+            # Keep orientation stable versus original axis direction.
+            alignment = float(np.dot(raw_day[valid, axis_idx], normalized))
+            if np.isfinite(alignment) and alignment < 0:
+                normalized = -normalized
+
+            orth_col = np.full(n_tickers, np.nan, dtype=float)
+            orth_col[valid] = normalized
+            orth_day[:, axis_idx] = orth_col
+
+        orth_daily_corr[date_idx] = _mean_abs_pairwise_corr(orth_day, min_overlap, epsilon)
+
+        for axis_idx in range(n_axes):
+            orth_arrays[axis_idx][date_idx, :] = orth_day[:, axis_idx]
+
+    orthogonalized = {
+        axis_name: pd.DataFrame(orth_arrays[idx], index=dates, columns=tickers)
+        for idx, axis_name in enumerate(axis_order)
+    }
+
+    diagnostics = {
+        "axis_order": axis_order,
+        "raw_daily_mean_abs_corr": pd.Series(raw_daily_corr, index=dates, name="raw_mean_abs_corr"),
+        "orth_daily_mean_abs_corr": pd.Series(orth_daily_corr, index=dates, name="orth_mean_abs_corr"),
+        "raw_mean_abs_corr": float(np.nanmean(raw_daily_corr)) if np.isfinite(raw_daily_corr).any() else np.nan,
+        "orth_mean_abs_corr": float(np.nanmean(orth_daily_corr)) if np.isfinite(orth_daily_corr).any() else np.nan,
+    }
+    return orthogonalized, diagnostics
 
 
 def _build_two_sided_axis_raw(
@@ -832,6 +975,7 @@ def build_five_factor_rotation_signals(
     force_rebuild_construction_cache: bool = False,
     construction_cache_path: Path | str | None = None,
     mwu_walkforward_config: dict | None = None,
+    axis_orthogonalization_config: dict | None = None,
     return_details: bool = False,
     debug: bool = False,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
@@ -1011,6 +1155,50 @@ def build_five_factor_rotation_signals(
         "defensive": (defensive_raw, "Stable", "Cyclical"),
     }
 
+    orth_cfg = axis_orthogonalization_config if isinstance(axis_orthogonalization_config, dict) else {}
+    orth_enabled = bool(orth_cfg.get("enabled", DEFAULT_ORTHOGONALIZE_AXES))
+    orth_details: Dict[str, object] = {}
+
+    if orth_enabled:
+        min_overlap = max(int(orth_cfg.get("min_overlap", DEFAULT_ORTHOG_MIN_OVERLAP)), 2)
+        epsilon = float(orth_cfg.get("epsilon", DEFAULT_ORTHOG_EPSILON))
+        axis_order = list(axis_specs.keys())
+        requested_order = orth_cfg.get("order")
+        if isinstance(requested_order, (list, tuple)) and requested_order:
+            preferred = list(dict.fromkeys([str(name) for name in requested_order]))
+            valid = [name for name in preferred if name in axis_specs]
+            missing = [name for name in preferred if name not in axis_specs]
+            remaining = [name for name in axis_order if name not in valid]
+            if valid:
+                axis_order = valid + remaining
+            if missing:
+                print(f"  ⚠️  Ignoring unknown orthogonalization axes: {', '.join(missing)}")
+
+        print(
+            "  Orthogonalizing axis raws "
+            f"(cross-sectional residualization, min_overlap={min_overlap})..."
+        )
+        raw_axis_map = {axis_name: axis_specs[axis_name][0] for axis_name in axis_order}
+        orth_axis_map, orth_details = _orthogonalize_axis_raw_scores(
+            axis_raw_map=raw_axis_map,
+            axis_order=axis_order,
+            min_overlap=min_overlap,
+            epsilon=epsilon,
+        )
+
+        axis_specs = {
+            axis_name: (orth_axis_map[axis_name], high_label, low_label)
+            for axis_name, (_, high_label, low_label) in axis_specs.items()
+        }
+
+        before_corr = orth_details.get("raw_mean_abs_corr", np.nan)
+        after_corr = orth_details.get("orth_mean_abs_corr", np.nan)
+        if np.isfinite(before_corr) and np.isfinite(after_corr):
+            print(f"  Axis overlap reduced: mean |corr| {before_corr:.3f} -> {after_corr:.3f}")
+
+        for axis_name, (axis_raw, _, _) in axis_specs.items():
+            _debug_panel_stats(debug, f"axis_raw_orth:{axis_name}", axis_raw)
+
     # Compute axis components for all configured axes (MWU weights all of them)
     axis_components: Dict[str, pd.DataFrame] = {}
     axis_summary: Dict[str, Tuple] = {}
@@ -1141,12 +1329,22 @@ def build_five_factor_rotation_signals(
     print(f"  Multi-factor rotation signals: {final_scores.shape[0]} days x {final_scores.shape[1]} tickers ({n_total} axes)")
 
     if return_details:
-        return final_scores, {
+        details = {
             "yearly_axis_winners": yearly_report,
             "axis_weights": axis_weights,
             "axis_components": aligned_components,
             "active_axes": list(axis_specs.keys()),
         }
+        if orth_enabled:
+            details["axis_orthogonalization"] = {
+                "method": "cross_sectional_residualization",
+                "axis_order": orth_details.get("axis_order", list(axis_specs.keys())),
+                "raw_mean_abs_corr": orth_details.get("raw_mean_abs_corr", np.nan),
+                "orth_mean_abs_corr": orth_details.get("orth_mean_abs_corr", np.nan),
+                "raw_daily_mean_abs_corr": orth_details.get("raw_daily_mean_abs_corr"),
+                "orth_daily_mean_abs_corr": orth_details.get("orth_daily_mean_abs_corr"),
+            }
+        return final_scores, details
 
     return final_scores
 

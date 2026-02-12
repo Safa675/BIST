@@ -73,7 +73,7 @@ def calculate_investment_metrics_for_ticker(
             bs = pd.read_excel(xlsx_path, sheet_name=BALANCE_SHEET)
             try:
                 cf = pd.read_excel(xlsx_path, sheet_name=CASH_FLOW_SHEET)
-            except:
+            except Exception:
                 cf = None
         except Exception:
             return {}
@@ -231,4 +231,3 @@ def build_investment_signals(
     result = pd.DataFrame(composite_panel, index=dates)
     print(f"  ✅ Investment signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result
-

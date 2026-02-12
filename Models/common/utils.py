@@ -148,9 +148,9 @@ def coerce_quarter_cols(row: pd.Series) -> pd.Series:
                         try:
                             values.append(float(str(val).replace(',', '.').replace(' ', '')))
                             dates.append(dt)
-                        except:
+                        except Exception:
                             pass
-            except:
+            except Exception:
                 pass
     if not dates:
         return pd.Series(dtype=float)
@@ -226,7 +226,7 @@ def apply_lag(
             ts_stamp = pd.Timestamp(ts)
             if ts_stamp < min_valid_date or ts_stamp > max_valid_date:
                 continue
-        except:
+        except Exception:
             continue
 
         # Q4 (December) has longer lag due to annual audit requirements
@@ -240,7 +240,7 @@ def apply_lag(
             effective_date = (ts_stamp + pd.Timedelta(days=lag_days)).normalize()
             effective_index.append(effective_date)
             effective_values.append(series[ts])
-        except:
+        except Exception:
             continue
 
     if effective_index:

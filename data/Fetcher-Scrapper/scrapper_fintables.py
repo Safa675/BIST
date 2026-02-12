@@ -21,7 +21,7 @@ def scrape_fintables_robust():
         # CLICK the first row to ensure the table has "Focus" so keyboard keys work
         try:
             page.click("table tbody tr:first-child", timeout=5000)
-        except:
+        except Exception:
             print("Could not click table row automatically. Please click a row in the browser manually, then wait.")
             time.sleep(3)
 
@@ -47,7 +47,7 @@ def scrape_fintables_robust():
                         if code and code not in unique_stocks:
                             unique_stocks[code] = name
                             new_data_found = True
-                except:
+                except Exception:
                     continue
             
             print(f"Stocks Found: {len(unique_stocks)}", end="\r")

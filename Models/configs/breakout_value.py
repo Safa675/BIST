@@ -23,7 +23,7 @@ SIGNAL_CONFIG = {
     # Portfolio engineering options
     'portfolio_options': {
         # Regime filter
-        'use_regime_filter': False,
+        'use_regime_filter': True,
 
         # Volatility targeting
         'use_vol_targeting': False,

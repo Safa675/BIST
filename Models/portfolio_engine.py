@@ -44,6 +44,10 @@ from signals.macro_hedge_signals import build_macro_hedge_signals
 from signals.quality_momentum_signals import build_quality_momentum_signals
 from signals.quality_value_signals import build_quality_value_signals
 from signals.small_cap_momentum_signals import build_small_cap_momentum_signals
+from signals.accrual_signals import build_accrual_signals
+from signals.asset_growth_signals import build_asset_growth_signals
+from signals.betting_against_beta_signals import build_betting_against_beta_signals
+from signals.roa_signals import build_roa_signals
 from signals.size_rotation_signals import (
     build_size_rotation_signals,
     build_market_cap_panel as build_size_market_cap_panel,
@@ -54,6 +58,18 @@ from signals.size_rotation_momentum_signals import build_size_rotation_momentum_
 from signals.size_rotation_quality_signals import build_size_rotation_quality_signals
 from signals.five_factor_rotation_signals import build_five_factor_rotation_signals
 
+# New imported signals from Quantpedia strategies
+from signals.short_term_reversal_signals import build_short_term_reversal_signals
+from signals.consistent_momentum_signals import build_consistent_momentum_signals
+from signals.residual_momentum_signals import build_residual_momentum_signals
+from signals.momentum_reversal_volatility_signals import build_momentum_reversal_volatility_signals
+from signals.low_volatility_signals import build_low_volatility_signals
+from signals.trend_following_signals import build_trend_following_signals
+from signals.sector_rotation_signals import build_sector_rotation_signals
+from signals.earnings_quality_signals import build_earnings_quality_signals
+from signals.fscore_reversal_signals import build_fscore_reversal_signals
+from signals.momentum_asset_growth_signals import build_momentum_asset_growth_signals
+from signals.pairs_trading_signals import build_pairs_trading_signals
 
 
 # ============================================================================
@@ -68,7 +84,6 @@ from signals.five_factor_rotation_signals import build_five_factor_rotation_sign
 REGIME_ALLOCATIONS = {
     'Bull': 1.0,
     'Recovery': 1.0,
-    'Choppy': 0.5,
     'Stress': 0.0,
     'Bear': 0.0
 }
@@ -574,6 +589,7 @@ class PortfolioEngine:
         self.open_df = None
         self.volume_df = None
         self.regime_series = None
+        self.regime_allocations = REGIME_ALLOCATIONS.copy()
         self.xautry_prices = None
         self.xu100_prices = None
         self.fundamentals = None
@@ -604,11 +620,18 @@ class PortfolioEngine:
         self.fundamentals = self.loader.load_fundamentals()
         
         
-        # Load regime predictions
-        regime_outputs_dir = Path(__file__).parent.parent / "Regime Filter" / "outputs"
-        features_file = regime_outputs_dir / "regime_features.csv"
-        features = pd.read_csv(features_file, index_col=0, parse_dates=True)
-        self.regime_series = self.loader.load_regime_predictions(features)
+        # Load regime predictions (Simple Regime Filter outputs)
+        self.regime_series = self.loader.load_regime_predictions()
+        loaded_allocations = self.loader.load_regime_allocations()
+        if loaded_allocations:
+            self.regime_allocations = REGIME_ALLOCATIONS.copy()
+            self.regime_allocations.update(loaded_allocations)
+            print("  ✅ Using regime allocations from regime_labels.json:")
+            for regime, alloc in sorted(self.regime_allocations.items()):
+                print(f"    {regime}: {alloc:.2f}")
+        else:
+            self.regime_allocations = REGIME_ALLOCATIONS.copy()
+            print("  ℹ️  Using fallback regime allocations from portfolio_engine constants.")
         
         # Load XAU/TRY
         xautry_file = self.data_dir / "xau_try_2013_2026.csv"
@@ -675,8 +698,6 @@ class PortfolioEngine:
         
         start_time = time.time()
         factor_details = {}
-        custom_signal_bundle = None
-        
         # Build signals
         dates = self.close_df.index
         
@@ -716,9 +737,6 @@ class PortfolioEngine:
             low_df = self.prices.pivot_table(index='Date', columns='Ticker', values='Low').sort_index()
             low_df.columns = [c.split('.')[0].upper() for c in low_df.columns]
             signals = build_breakout_value_signals(self.close_df, high_df, low_df, dates, self.loader)
-        elif factor_name == "currency_rotation":
-            # Currency rotation: USD/TRY mean reversion with sector rotation
-            signals = build_currency_rotation_signals(self.close_df, dates, self.loader)
         elif factor_name == "dividend_rotation":
             # Dividend rotation: High-quality dividend stocks during rate normalization
             signals = build_dividend_rotation_signals(self.close_df, dates, self.loader)
@@ -747,6 +765,7 @@ class PortfolioEngine:
             # Five-factor side rotation: select winning side across 5 classic axes
             cache_cfg = config.get("construction_cache", {})
             debug_cfg = config.get("debug", {})
+            orth_cfg = config.get("axis_orthogonalization", {})
             debug_env = os.getenv("FIVE_FACTOR_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
             debug_enabled = bool(debug_cfg.get("enabled", False) or debug_env)
             signals, factor_details = build_five_factor_rotation_signals(
@@ -759,20 +778,56 @@ class PortfolioEngine:
                 force_rebuild_construction_cache=cache_cfg.get("force_rebuild", False),
                 construction_cache_path=cache_cfg.get("path"),
                 mwu_walkforward_config=walk_forward_cfg,
+                axis_orthogonalization_config=orth_cfg,
                 return_details=True,
                 debug=debug_enabled,
             )
-        elif factor_name == "gold_fund_arbitrage":
-            signal_params = config.get("signal_params", {})
-            custom_signal_bundle = build_gold_fund_arbitrage_signals(
-                dates=dates,
-                data_dir=self.data_dir,
-                **signal_params,
-            )
-            signals = custom_signal_bundle["signals"]
-            factor_details["gold_tracking_metrics"] = custom_signal_bundle.get("tracking_metrics")
-            factor_details["gold_spread_zscores"] = custom_signal_bundle.get("spread_z")
-            factor_details["gold_selected_codes"] = custom_signal_bundle.get("selected_codes", [])
+        elif factor_name == "accrual":
+            # Accrual Anomaly: Low accruals = High quality earnings
+            signals = build_accrual_signals(self.fundamentals, dates, self.loader)
+        elif factor_name == "asset_growth":
+            # Asset Growth Effect: Low asset growth = Conservative management
+            signals = build_asset_growth_signals(self.fundamentals, dates, self.loader)
+        elif factor_name == "betting_against_beta":
+            # Betting Against Beta: Low beta stocks outperform
+            signals = build_betting_against_beta_signals(self.close_df, dates, self.loader)
+        elif factor_name == "roa":
+            # ROA Effect: High profitability relative to assets
+            signals = build_roa_signals(self.fundamentals, dates, self.loader)
+        # === NEW QUANTPEDIA-IMPORTED SIGNALS ===
+        elif factor_name == "short_term_reversal":
+            # Short-Term Reversal: Weekly losers outperform
+            signals = build_short_term_reversal_signals(self.close_df, dates, self.loader)
+        elif factor_name == "consistent_momentum":
+            # Consistent Momentum: Winners in multiple timeframes
+            signals = build_consistent_momentum_signals(self.close_df, dates, self.loader)
+        elif factor_name == "residual_momentum":
+            # Residual Momentum: Market-adjusted stock-specific momentum
+            signals = build_residual_momentum_signals(self.close_df, dates, self.loader)
+        elif factor_name == "momentum_reversal_volatility":
+            # Combined: Momentum + Reversal + Low Volatility
+            signals = build_momentum_reversal_volatility_signals(self.close_df, dates, self.loader)
+        elif factor_name == "low_volatility":
+            # Low Volatility: Low-vol stocks outperform high-vol
+            signals = build_low_volatility_signals(self.close_df, dates, self.loader)
+        elif factor_name == "trend_following":
+            # Trend Following: Stocks at/near all-time highs
+            signals = build_trend_following_signals(self.close_df, dates, self.loader)
+        elif factor_name == "sector_rotation":
+            # Sector Rotation: Overweight top-performing BIST sectors
+            signals = build_sector_rotation_signals(self.close_df, dates, self.loader)
+        elif factor_name == "earnings_quality":
+            # Earnings Quality: Multi-factor quality (accruals, ROE, CF/A, D/A)
+            signals = build_earnings_quality_signals(self.fundamentals, self.close_df, dates, self.loader)
+        elif factor_name == "fscore_reversal":
+            # F-Score + Reversal: Quality losers outperform junk winners
+            signals = build_fscore_reversal_signals(self.fundamentals, self.close_df, dates, self.loader)
+        elif factor_name == "momentum_asset_growth":
+            # Momentum + Asset Growth: Momentum within high-growth stocks
+            signals = build_momentum_asset_growth_signals(self.fundamentals, self.close_df, dates, self.loader)
+        elif factor_name == "pairs_trading":
+            # Pairs Trading: Mean reversion on correlated pairs
+            signals = build_pairs_trading_signals(self.close_df, dates, self.loader)
         else:
             raise ValueError(f"Unknown factor: {factor_name}")
 
@@ -780,24 +835,14 @@ class PortfolioEngine:
         portfolio_options = config.get('portfolio_options', {})
 
         # Run backtest with custom timeline and portfolio options
-        if factor_name == "gold_fund_arbitrage":
-            results = self._run_gold_fund_arbitrage_backtest(
-                signal_bundle=custom_signal_bundle,
-                factor_name=factor_name,
-                rebalance_freq=rebalance_freq,
-                start_date=factor_start_date,
-                end_date=factor_end_date,
-                portfolio_options=portfolio_options,
-            )
-        else:
-            results = self._run_backtest(
-                signals,
-                factor_name,
-                rebalance_freq,
-                factor_start_date,
-                factor_end_date,
-                portfolio_options,
-            )
+        results = self._run_backtest(
+            signals,
+            factor_name,
+            rebalance_freq,
+            factor_start_date,
+            factor_end_date,
+            portfolio_options,
+        )
         if factor_details:
             results.update(factor_details)
             if 'yearly_axis_winners' in results and isinstance(results['yearly_axis_winners'], pd.DataFrame):
@@ -931,7 +976,9 @@ class PortfolioEngine:
         rebalance_count = 0
         
         # Track regime-specific performance
-        regime_returns_tracker = {regime: [] for regime in ['Bull', 'Recovery', 'Choppy', 'Stress', 'Bear']}
+        regime_allocations = self.regime_allocations or REGIME_ALLOCATIONS
+        fallback_regime = 'Bear' if 'Bear' in regime_allocations else next(iter(regime_allocations), 'Bear')
+        regime_returns_tracker = {regime: [] for regime in regime_allocations}
 
         # Get options for this backtest
         slippage_factor = opts['slippage_bps'] / 10000.0 if opts['use_slippage'] else 0.0
@@ -954,13 +1001,13 @@ class PortfolioEngine:
             mcap_slippage_liquidity = self.volume_df.reindex(index=trading_days, columns=self.close_df.columns)
 
         for i, date in enumerate(trading_days[:-1]):
-            regime = regime_series_lagged.get(date, 'Choppy')
-            if pd.isna(regime):
-                regime = 'Choppy'
+            regime = regime_series_lagged.get(date, fallback_regime)
+            if pd.isna(regime) or regime not in regime_allocations:
+                regime = fallback_regime
 
             # Regime filter: if disabled, always use 100% allocation
             if opts['use_regime_filter']:
-                allocation = REGIME_ALLOCATIONS.get(regime, 0.5)
+                allocation = regime_allocations.get(regime, 0.0)
             else:
                 allocation = 1.0  # Always fully invested
             
@@ -1185,7 +1232,7 @@ class PortfolioEngine:
         
         # Calculate regime performance
         regime_perf = {}
-        for regime in ['Bull', 'Recovery', 'Choppy', 'Stress', 'Bear']:
+        for regime in regime_allocations:
             mask = returns_df['regime'] == regime
             if mask.sum() > 0:
                 r = returns[mask]
@@ -1223,259 +1270,6 @@ class PortfolioEngine:
             'holdings_history': holdings_history,
         }
 
-    def _run_gold_fund_arbitrage_backtest(
-        self,
-        signal_bundle: dict,
-        factor_name: str,
-        rebalance_freq: str = 'daily',
-        start_date: pd.Timestamp = None,
-        end_date: pd.Timestamp = None,
-        portfolio_options: dict = None,
-    ):
-        """
-        Backtest TEFAS gold-fund mean-reversion strategy versus XAU/TRY.
-
-        Includes:
-        - Transaction costs via turnover * bps
-        - TEFAS execution delay (cut-off timing proxy)
-        """
-        if not signal_bundle:
-            raise ValueError("gold_fund_arbitrage requires a non-empty signal bundle")
-
-        opts = DEFAULT_PORTFOLIO_OPTIONS.copy()
-        if portfolio_options:
-            opts.update(portfolio_options)
-
-        tefas_cost_bps = float(opts.get('tefas_transaction_cost_bps', opts.get('slippage_bps', 5.0)))
-        execution_lag = max(int(opts.get('tefas_execution_lag_days', 1)), 0)
-        hold_xau_when_flat = bool(opts.get('hold_xau_when_flat', False))
-        use_costs = bool(opts.get('use_slippage', True))
-        pair_use_beta_hedge = bool(opts.get('pair_use_beta_hedge', True))
-        pair_target_gross = float(opts.get('pair_target_gross_exposure', 1.0))
-        pair_beta_floor = float(opts.get('pair_beta_floor', 0.1))
-        pair_beta_cap = float(opts.get('pair_beta_cap', 2.0))
-
-        print(f"\n🔧 Portfolio Engineering Settings:")
-        print(f"   Strategy Type: TEFAS Gold Fund Arbitrage")
-        print(f"   Decision Frequency: {rebalance_freq}")
-        print(f"   TEFAS Execution Lag: {execution_lag} day(s)")
-        print(f"   Transaction Costs: {'ON' if use_costs else 'OFF'} ({tefas_cost_bps:.2f} bps)")
-        print(f"   Hold XAU/TRY when flat: {'ON' if hold_xau_when_flat else 'OFF (cash)'}")
-        print(f"   Pair Hedge: {'Beta' if pair_use_beta_hedge else '1:1'}")
-        print(f"   Pair Target Gross Exposure: {pair_target_gross:.2f}")
-        print(f"   Vol Targeting: {'ON (' + str(int(opts['target_downside_vol']*100)) + '%)' if opts['use_vol_targeting'] else 'OFF'}")
-
-        backtest_start = start_date if start_date is not None else self.start_date
-        backtest_end = end_date if end_date is not None else self.end_date
-
-        signals = signal_bundle["signals"].copy().sort_index()
-        fund_prices = signal_bundle["fund_prices"].copy().sort_index()
-        xau_prices = signal_bundle["xau_prices"].copy().sort_index()
-
-        # Restrict to requested timeline and valid data rows.
-        date_mask = (signals.index >= backtest_start) & (signals.index <= backtest_end)
-        trading_days = signals.index[date_mask]
-        if trading_days.empty:
-            raise ValueError("No trading days available for selected timeline.")
-
-        signals = signals.reindex(trading_days).fillna(0.0)
-        fund_prices = fund_prices.reindex(trading_days)
-        xau_prices = xau_prices.reindex(trading_days).ffill()
-
-        valid_rows = fund_prices.notna().any(axis=1) & xau_prices.notna()
-        signals = signals.loc[valid_rows]
-        fund_prices = fund_prices.loc[valid_rows]
-        xau_prices = xau_prices.loc[valid_rows]
-        trading_days = signals.index
-
-        if len(trading_days) < 2:
-            raise ValueError("Insufficient overlap between fund prices and XAU/TRY for backtest.")
-
-        # Rebalance control: daily, monthly, or quarterly decision updates.
-        if rebalance_freq == 'monthly':
-            rebalance_days = identify_monthly_rebalance_days(trading_days)
-        elif rebalance_freq == 'quarterly':
-            rebalance_days = self._identify_quarterly_rebalance_days(trading_days)
-        else:
-            rebalance_days = set(trading_days)
-
-        if rebalance_freq in {'monthly', 'quarterly'}:
-            desired_pos = pd.DataFrame(0.0, index=trading_days, columns=signals.columns)
-            current_target = pd.Series(0.0, index=signals.columns)
-            for d in trading_days:
-                if d in rebalance_days:
-                    current_target = signals.loc[d].fillna(0.0).clip(lower=-1.0, upper=1.0)
-                desired_pos.loc[d] = current_target.values
-        else:
-            desired_pos = signals.copy().fillna(0.0).clip(lower=-1.0, upper=1.0)
-
-        # TEFAS cut-off timing proxy: position change is executed with lag.
-        executed_pos = desired_pos.shift(execution_lag).fillna(0.0)
-        active_count = executed_pos.abs().sum(axis=1)
-
-        # Equal-abs allocation across active pairs. Sign determines long/short fund leg.
-        fund_weights = executed_pos.div(active_count.replace(0.0, np.nan), axis=0).fillna(0.0)
-
-        # Hedge each fund leg with opposite XAU/TRY exposure.
-        beta_map = signal_bundle.get("selected_beta_map", {}) or {}
-        beta_vec = pd.Series(beta_map, dtype=float).reindex(fund_weights.columns)
-        beta_vec = beta_vec.replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(lower=pair_beta_floor, upper=pair_beta_cap)
-        if not pair_use_beta_hedge:
-            beta_vec = pd.Series(1.0, index=fund_weights.columns, dtype=float)
-
-        raw_gold_weight = -fund_weights.mul(beta_vec, axis=1).sum(axis=1)
-
-        # Scale to target gross exposure (fund gross + gold gross).
-        raw_gross = fund_weights.abs().sum(axis=1) + raw_gold_weight.abs()
-        target_gross = max(pair_target_gross, 0.0)
-        scale = (target_gross / raw_gross.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        fund_weights = fund_weights.mul(scale, axis=0)
-        gold_weight = raw_gold_weight * scale
-
-        fund_fwd_ret = (fund_prices.shift(-1) / fund_prices - 1.0).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        xautry_fwd_ret = (xau_prices.shift(-1) / xau_prices - 1.0).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-        fund_leg_return = (fund_weights * fund_fwd_ret.reindex_like(fund_weights)).sum(axis=1)
-        gold_leg_return = gold_weight * xautry_fwd_ret
-        gross_return = fund_leg_return + gold_leg_return
-        if hold_xau_when_flat:
-            flat_mask = active_count == 0
-            gross_return = gross_return.where(~flat_mask, xautry_fwd_ret)
-
-        fund_turnover = fund_weights.diff().abs().sum(axis=1)
-        gold_turnover = gold_weight.diff().abs()
-        turnover = fund_turnover + gold_turnover
-        turnover.iloc[0] = fund_weights.iloc[0].abs().sum() + abs(float(gold_weight.iloc[0]))
-        transaction_cost = turnover * (tefas_cost_bps / 10000.0) if use_costs else pd.Series(0.0, index=turnover.index)
-        raw_returns = gross_return - transaction_cost
-
-        # Post-hedge residual beta should be near zero.
-        net_gold_beta = fund_weights.mul(beta_vec, axis=1).sum(axis=1) + gold_weight
-
-        returns_df = pd.DataFrame(
-            {
-                'return': raw_returns,
-                'xautry_return': xautry_fwd_ret,
-                'regime': 'GoldArb',
-                'n_stocks': active_count.astype(int),
-                'allocation': 1.0,
-                'turnover': turnover,
-                'transaction_cost': transaction_cost,
-                'fund_leg_return': fund_leg_return,
-                'gold_leg_return': gold_leg_return,
-                'gold_weight': gold_weight,
-                'gross_exposure': fund_weights.abs().sum(axis=1) + gold_weight.abs(),
-                'net_gold_beta': net_gold_beta,
-            },
-            index=trading_days,
-        )
-
-        # Apply volatility targeting (optional)
-        if opts['use_vol_targeting']:
-            print(f"\n📈 Applying {opts['target_downside_vol']*100:.0f}% downside volatility targeting...")
-            returns = apply_downside_vol_targeting(
-                raw_returns,
-                target_vol=opts['target_downside_vol'],
-                lookback=opts['vol_lookback'],
-                vol_floor=opts['vol_floor'],
-                vol_cap=opts['vol_cap'],
-            )
-        else:
-            returns = raw_returns
-
-        equity = (1.0 + returns).cumprod()
-        total_return = equity.iloc[-1] - 1.0
-        n_years = len(returns) / 252
-        cagr = (1.0 + total_return) ** (1.0 / n_years) - 1.0 if n_years > 0 else 0.0
-        sharpe = returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0.0
-
-        downside = returns[returns < 0]
-        sortino = returns.mean() / downside.std() * np.sqrt(252) if len(downside) > 0 and downside.std() > 0 else 0.0
-        drawdown = equity / equity.cummax() - 1.0
-        max_dd = drawdown.min()
-        win_rate = (returns > 0).sum() / len(returns) if len(returns) > 0 else 0.0
-
-        pos_delta = executed_pos.diff().fillna(executed_pos)
-        # +1->-1 flip counts as 2 trades (close + open), which is intended.
-        trade_count = int(pos_delta.abs().sum().sum())
-        rebalance_count = int((turnover > 0).sum())
-
-        holdings_history = []
-        for d in trading_days:
-            row = fund_weights.loc[d]
-            actives = row[row != 0]
-            if not actives.empty:
-                for ticker, w in actives.items():
-                    holdings_history.append(
-                        {
-                            'date': d,
-                            'ticker': ticker,
-                            'weight': float(w),
-                            'regime': 'GoldArb',
-                            'allocation': 1.0,
-                        },
-                    )
-                gw = float(gold_weight.loc[d])
-                if gw != 0.0:
-                    holdings_history.append(
-                        {
-                            'date': d,
-                            'ticker': 'XAU/TRY',
-                            'weight': gw,
-                            'regime': 'GoldArb',
-                            'allocation': 1.0,
-                        },
-                    )
-            else:
-                holdings_history.append(
-                    {
-                        'date': d,
-                        'ticker': 'XAU/TRY' if hold_xau_when_flat else 'CASH',
-                        'weight': 1.0,
-                        'regime': 'GoldArb',
-                        'allocation': 1.0,
-                    },
-                )
-
-        regime_perf = {
-            'GoldArb': {
-                'count': int(len(returns)),
-                'mean_return': float(returns.mean() * 252),
-                'total_return': float((1.0 + returns).prod() - 1.0),
-                'win_rate': float((returns > 0).sum() / len(returns)) if len(returns) > 0 else 0.0,
-            },
-        }
-
-        print(f"\n📊 Results:")
-        print(f"   Period: {trading_days[0].date()} to {trading_days[-1].date()}")
-        print(f"   Trading days: {len(trading_days)}")
-        print(f"   Total Return: {total_return*100:.1f}%")
-        print(f"   CAGR: {cagr*100:.2f}%")
-        print(f"   Sharpe: {sharpe:.2f}")
-        print(f"   Sortino: {sortino:.2f}")
-        print(f"   Max Drawdown: {max_dd*100:.2f}%")
-        print(f"   Win Rate: {win_rate*100:.1f}%")
-        print(f"   Rebalances: {rebalance_count}")
-        print(f"   Total Trades: {trade_count}")
-        print(f"   Total Cost Drag: {transaction_cost.sum()*100:.2f}%")
-
-        return {
-            'returns': returns,
-            'equity': equity,
-            'total_return': total_return,
-            'cagr': cagr,
-            'sharpe': sharpe,
-            'sortino': sortino,
-            'max_drawdown': max_dd,
-            'win_rate': win_rate,
-            'xautry_returns': returns_df['xautry_return'],
-            'regime_performance': regime_perf,
-            'rebalance_count': rebalance_count,
-            'trade_count': trade_count,
-            'returns_df': returns_df,
-            'holdings_history': holdings_history,
-        }
-    
     def _identify_quarterly_rebalance_days(self, trading_days: pd.DatetimeIndex) -> set:
         """Identify quarterly rebalancing days"""
         rebalance_days = set()
@@ -1530,12 +1324,6 @@ class PortfolioEngine:
         yearly_bench_col = "XU100_Return"
         yearly_excess_col = "Excess_vs_XU100"
         yearly_table_label = "XU100"
-        if factor_name == "gold_fund_arbitrage":
-            benchmark_name = "XAU/TRY"
-            benchmark_returns = xautry_returns
-            yearly_bench_col = "XAUTRY_Return"
-            yearly_excess_col = "Excess_vs_XAUTRY"
-            yearly_table_label = "XAUTRY"
         
         # Save equity curve
         pd.DataFrame({'Equity': results['equity']}).to_csv(output_dir / 'equity_curve.csv')
@@ -1926,7 +1714,11 @@ def main():
     script_dir = Path(__file__).parent  # Models/
     bist_root = script_dir.parent        # BIST/
     data_dir = bist_root / "data"
-    regime_model_dir = bist_root / "Regime Filter" / "outputs" / "ensemble_model"
+    regime_model_dir_candidates = [
+        bist_root / "Simple Regime Filter" / "outputs",
+        bist_root / "Regime Filter" / "outputs",
+    ]
+    regime_model_dir = next((p for p in regime_model_dir_candidates if p.exists()), regime_model_dir_candidates[0])
 
 
 

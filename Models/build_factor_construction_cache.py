@@ -49,7 +49,11 @@ def main() -> None:
     models_dir = Path(__file__).parent
     project_root = models_dir.parent
     data_dir = project_root / "data"
-    regime_model_dir = project_root / "Regime Filter" / "outputs" / "ensemble_model"
+    regime_model_dir_candidates = [
+        project_root / "Simple Regime Filter" / "outputs",
+        project_root / "Regime Filter" / "outputs",
+    ]
+    regime_model_dir = next((p for p in regime_model_dir_candidates if p.exists()), regime_model_dir_candidates[0])
 
     print("=" * 70)
     print("BUILDING FIVE-FACTOR AXIS CONSTRUCTION CACHE")

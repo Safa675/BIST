@@ -63,7 +63,36 @@ Regime Filter/outputs/
 .DS_Store
 Thumbs.db
 *.log
+*.backup
 
-# Large local data
+# ===== ENVIRONMENT / SECRETS =====
+.env
+.env.*
+*.env
+
+# ===== LARGE LOCAL DATA =====
 /data/multi_factor_axis_construction.parquet
 /data/consolidated_isyatirim_prices.parquet
+/data/bist_prices_full.parquet
+/data/fundamental_data_consolidated.parquet
+
+# ===== OUTPUT / RESULT FILES =====
+data/gold_arb_scenario_check.csv
+data/gold_fund_arbitrage_report.json
+data/gold_fund_latest_signals.csv
+data/gold_fund_spread_zscores.csv
+data/gold_fund_spread_zscores.parquet
+data/gold_fund_tracking_quality.csv
+data/gold_funds_fetch_report.json
+data/gold_funds_universe.csv
+data/GGK_daily_prices.csv
+
+# ===== EXPERIMENTAL / ARCHIVE =====
+overengineered/
+
+# ===== WEB APP BUILD =====
+.next/
+node_modules/
+.claude/
+.yfinance_cache/
+*.db

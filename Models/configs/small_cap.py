@@ -21,7 +21,7 @@ SIGNAL_CONFIG = {
     # Portfolio engineering options
     'portfolio_options': {
         # Regime filter - switches to gold in Bear/Stress regimes
-        'use_regime_filter': False,
+        'use_regime_filter': True,
 
         # Volatility targeting - scales leverage to target constant vol
         'use_vol_targeting': False,
