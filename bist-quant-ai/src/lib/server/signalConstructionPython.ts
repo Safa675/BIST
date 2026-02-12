@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import path from "path";
 
 const PYTHON_SCRIPT = path.resolve(process.cwd(), "dashboard", "signal_construction_api.py");
+const REMOTE_ENGINE_URL = (process.env.SIGNAL_ENGINE_URL || "").trim();
 
 export interface SignalConstructionPayload {
     universe?: string;
@@ -14,6 +15,38 @@ export interface SignalConstructionPayload {
     sell_threshold?: number;
     indicators?: Record<string, { enabled?: boolean; params?: Record<string, number> }>;
     _mode?: "construct" | "backtest";
+}
+
+async function executeRemoteSignalEngine(
+    url: string,
+    payload: SignalConstructionPayload
+): Promise<Record<string, unknown>> {
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+    });
+
+    let parsed: unknown = null;
+    try {
+        parsed = await response.json();
+    } catch {
+        parsed = { error: `Remote signal engine returned non-JSON response (${response.status}).` };
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Remote signal engine response must be a JSON object.");
+    }
+
+    const result = parsed as Record<string, unknown>;
+    if (!response.ok) {
+        const remoteError = typeof result.error === "string" ? result.error : `Remote engine failed (${response.status})`;
+        throw new Error(remoteError);
+    }
+    return result;
 }
 
 function parseJsonFromStdout(stdout: string): Record<string, unknown> {
@@ -52,6 +85,16 @@ function parseJsonFromStdout(stdout: string): Record<string, unknown> {
 }
 
 export async function executeSignalPython(payload: SignalConstructionPayload): Promise<Record<string, unknown>> {
+    if (REMOTE_ENGINE_URL) {
+        return executeRemoteSignalEngine(REMOTE_ENGINE_URL, payload);
+    }
+
+    if (process.env.VERCEL) {
+        throw new Error(
+            "Signal engine is not configured for Vercel runtime. Set SIGNAL_ENGINE_URL to an external Python API."
+        );
+    }
+
     return new Promise((resolve, reject) => {
         const child = spawn("python3", [PYTHON_SCRIPT], {
             cwd: path.dirname(PYTHON_SCRIPT),
