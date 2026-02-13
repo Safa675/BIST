@@ -446,14 +446,14 @@ export default function FactorLabPage() {
     return (
         <>
             <Navbar />
-            <main style={{ paddingTop: 92, paddingBottom: 64, background: "var(--bg-primary)", minHeight: "100vh" }}>
-                <div style={{ maxWidth: 1420, margin: "0 auto", padding: "0 24px" }}>
-                    <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <main className="page-compact">
+                <div className="page-container">
+                    <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                         <div>
-                            <h1 style={{ margin: 0, fontSize: "1.8rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
+                            <h1 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
                                 Factor Lab
                             </h1>
-                            <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
+                            <p style={{ margin: "4px 0 0", color: "var(--text-secondary)", fontSize: "0.85rem" }}>
                                 Build custom model strategies from your <code>Models</code> factors with parameter overrides and weighted combinations.
                             </p>
                         </div>
@@ -474,8 +474,8 @@ export default function FactorLabPage() {
                         </div>
                     )}
 
-                    <div className="glass-card" style={{ padding: 18, marginBottom: 18 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                    <div className="glass-card" style={{ padding: 12, marginBottom: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
                             <label style={{ display: "grid", gap: 6 }}>
                                 <span className="metric-label">Start Date</span>
                                 <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputStyle} />
@@ -498,9 +498,9 @@ export default function FactorLabPage() {
                         </div>
                     </div>
 
-                    <div className="glass-card" style={{ padding: 18, marginBottom: 18 }}>
-                        <h2 style={{ margin: "0 0 10px", fontSize: "1.03rem" }}>Portfolio Engine Settings</h2>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+                    <div className="glass-card" style={{ padding: 12, marginBottom: 10 }}>
+                        <h2 style={{ margin: "0 0 8px", fontSize: "0.95rem" }}>Portfolio Engine Settings</h2>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
                             <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
                                 <input
                                     type="checkbox"
@@ -558,7 +558,7 @@ export default function FactorLabPage() {
                                 <span className="metric-label">MCAP Slippage</span>
                             </label>
                         </div>
-                        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+                        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
                             <label style={{ display: "grid", gap: 6 }}>
                                 <span className="metric-label">Target Downside Vol</span>
                                 <input
@@ -634,10 +634,10 @@ export default function FactorLabPage() {
                         </div>
                     </div>
 
-                    <div className="glass-card" style={{ padding: 18, marginBottom: 18 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                            <h2 style={{ margin: 0, fontSize: "1.03rem", display: "inline-flex", gap: 8, alignItems: "center" }}>
-                                <FlaskConical size={16} /> Factor Mix
+                    <div className="glass-card" style={{ padding: 12, marginBottom: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                            <h2 style={{ margin: 0, fontSize: "0.95rem", display: "inline-flex", gap: 6, alignItems: "center" }}>
+                                <FlaskConical size={14} /> Factor Mix
                             </h2>
                             <button onClick={addFactorRow} style={secondaryBtn} disabled={loadingCatalog || catalog.length === 0}>
                                 <Plus size={14} /> Add Factor
@@ -771,7 +771,7 @@ export default function FactorLabPage() {
                     )}
 
                     {result && (
-                        <div className="glass-card" style={{ padding: 18 }}>
+                        <div className="glass-card" style={{ padding: 12 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
                                 <div>
                                     <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Factor Lab Backtest</h2>

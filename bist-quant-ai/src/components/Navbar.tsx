@@ -13,13 +13,13 @@ export default function Navbar() {
         <nav className="nav-glass">
             <div
                 style={{
-                    maxWidth: 1400,
+                    maxWidth: 1600,
                     margin: "0 auto",
-                    padding: "0 24px",
+                    padding: "0 12px",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    height: 64,
+                    height: 52,
                 }}
             >
                 {/* Logo */}
@@ -64,7 +64,7 @@ export default function Navbar() {
                         { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
                         { href: "/signal-construction", label: "Signal Builder", icon: SlidersHorizontal },
                         { href: "/factor-lab", label: "Factor Lab", icon: FlaskConical },
-                        { href: "/dashboard#agents", label: "AI Agents", icon: Bot },
+                        { href: "/agents", label: "AI Agents", icon: Bot },
                     ].map((item) => (
                         <Link
                             key={item.href}
@@ -72,10 +72,10 @@ export default function Navbar() {
                             style={{
                                 display: "flex",
                                 alignItems: "center",
-                                gap: 6,
-                                padding: "8px 16px",
-                                borderRadius: "var(--radius-md)",
-                                fontSize: "0.875rem",
+                                gap: 5,
+                                padding: "6px 12px",
+                                borderRadius: "var(--radius-sm)",
+                                fontSize: "0.8rem",
                                 fontWeight: 500,
                                 textDecoration: "none",
                                 color: isActive(item.href)
@@ -92,7 +92,7 @@ export default function Navbar() {
                         </Link>
                     ))}
 
-                    <Link href="/dashboard" className="btn-primary" style={{ marginLeft: 12, padding: "8px 20px", fontSize: "0.85rem" }}>
+                    <Link href="/dashboard" className="btn-primary" style={{ marginLeft: 8, padding: "6px 14px", fontSize: "0.8rem" }}>
                         Launch App
                     </Link>
                 </div>

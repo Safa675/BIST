@@ -226,7 +226,7 @@ export default function AgentChat({ holdings, signals, regime }: Props) {
     const AgentIcon = config.icon;
 
     return (
-        <div className="glass-card" style={{ display: "flex", flexDirection: "column", height: 640, overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 500, overflow: "hidden" }}>
             {/* Agent selector tabs */}
             <div style={{ display: "flex", borderBottom: "1px solid var(--border-subtle)" }}>
                 {(Object.entries(AGENT_CONFIG) as [AgentType, typeof AGENT_CONFIG.portfolio][]).map(([key, cfg]) => {
@@ -238,16 +238,16 @@ export default function AgentChat({ holdings, signals, regime }: Props) {
                             onClick={() => setActiveAgent(key)}
                             style={{
                                 flex: 1,
-                                padding: "12px 8px",
+                                padding: "10px 6px",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                gap: 6,
+                                gap: 5,
                                 border: "none",
                                 borderBottom: isActive ? `2px solid ${cfg.color}` : "2px solid transparent",
                                 background: isActive ? `${cfg.color}10` : "transparent",
                                 color: isActive ? cfg.color : "var(--text-muted)",
-                                fontSize: "0.75rem",
+                                fontSize: "0.72rem",
                                 fontWeight: 600,
                                 cursor: "pointer",
                                 transition: "all var(--transition-fast)",

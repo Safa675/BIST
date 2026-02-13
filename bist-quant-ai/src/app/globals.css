@@ -205,10 +205,39 @@ body {
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   transition: all var(--transition-base);
   position: relative;
   overflow: hidden;
+}
+
+/* ============================================================
+   COMPACT LAYOUT UTILITIES
+   ============================================================ */
+
+.page-container {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 12px;
+}
+
+.page-compact {
+  padding-top: 72px;
+  padding-bottom: 24px;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+
+.section-tight {
+  margin-bottom: 12px;
+}
+
+.card-tight {
+  padding: 12px;
+}
+
+.card-compact {
+  padding: 10px;
 }
 
 .glass-card::before {

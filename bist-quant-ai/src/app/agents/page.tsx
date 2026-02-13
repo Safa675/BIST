@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import AgentChat from "@/components/AgentChat";
-import { Target, Shield, Brain, Sparkles, Zap, GitBranch, MessageCircle, ArrowRight } from "lucide-react";
+import { Target, Shield, Brain, Search, Sparkles, Zap, TrendingUp, Database } from "lucide-react";
 
 interface DashboardData {
     current_regime: string;
@@ -17,312 +17,217 @@ const AGENTS = [
         name: "Portfolio Manager",
         icon: Target,
         color: "#10b981",
-        gradient: "linear-gradient(135deg, #10b981, #059669)",
-        description: "Manages factor allocations, rebalancing decisions, and portfolio construction across 34+ quantitative signals.",
-        capabilities: [
-            "Factor signal selection & weighting",
-            "Monthly rebalancing optimization",
-            "Position sizing via inverse downside vol",
-            "Cross-signal conviction analysis",
-        ],
-        example: "\"We're overweight Breakout Value this month due to strong momentum confirmation signals. The factor's 102% CAGR is supported by low beta (0.36) and a robust 2.92 Sharpe ratio.\"",
+        shortDesc: "Factor allocations & rebalancing",
     },
     {
         key: "risk",
         name: "Risk Manager",
         icon: Shield,
         color: "#06b6d4",
-        gradient: "linear-gradient(135deg, #06b6d4, #0891b2)",
-        description: "Monitors drawdowns, volatility targeting, regime shifts, and implements stop-loss protocols to protect capital.",
-        capabilities: [
-            "Regime detection (XGBoost + LSTM + HMM)",
-            "Volatility targeting at 20% annualized",
-            "Max drawdown monitoring & alerts",
-            "Automatic gold rotation in Bear/Stress",
-        ],
-        example: "\"Current regime: Bull — maintaining full equity exposure. Realized downside vol is 17.2%, below our 20% target, so leverage is scaled to 1.0x. No risk alerts active.\"",
+        shortDesc: "Drawdowns & regime monitoring",
     },
     {
         key: "analyst",
         name: "Market Analyst",
         icon: Brain,
         color: "#8b5cf6",
-        gradient: "linear-gradient(135deg, #8b5cf6, #7c3aed)",
-        description: "Analyzes BIST market trends, sector rotations, macro drivers, and provides actionable market intelligence.",
-        capabilities: [
-            "Sector rotation & relative strength",
-            "USD/TRY & macro impact analysis",
-            "Earnings & fundamental catalysts",
-            "BIST-specific market intelligence",
-        ],
-        example: "\"Banking sector momentum is accelerating with AKBNK and VAKBN breaking 20-day highs. USD/TRY stability supports equity valuations. Our Breakout Value factor is capturing this rotation.\"",
+        shortDesc: "BIST trends & macro analysis",
+    },
+    {
+        key: "research",
+        name: "Research Analyst",
+        icon: Search,
+        color: "#f59e0b",
+        shortDesc: "Live screening & fundamentals",
     },
 ];
 
-const ARCHITECTURE_STEPS = [
-    {
-        icon: Zap,
-        title: "Data Ingestion",
-        description: "Real-time market data, fundamentals, and macro indicators flow into the quant engine.",
-    },
-    {
-        icon: GitBranch,
-        title: "Signal Generation",
-        description: "34+ factor models generate buy/sell signals based on value, momentum, quality, and breakout patterns.",
-    },
-    {
-        icon: Shield,
-        title: "Regime Detection",
-        description: "ML ensemble (XGBoost + LSTM + HMM) classifies the current market regime and adjusts risk exposure.",
-    },
-    {
-        icon: MessageCircle,
-        title: "Agent Orchestration",
-        description: "Three AI agents coordinate to analyze signals, manage risk, and explain decisions in natural language.",
-    },
+const CAPABILITIES = [
+    { icon: Zap, label: "34+ Factor Models", desc: "Value, momentum, quality signals" },
+    { icon: TrendingUp, label: "Technical Scans", desc: "RSI, MACD, Bollinger, Supertrend" },
+    { icon: Database, label: "Live BIST Data", desc: "758 stocks via Borsa MCP" },
+    { icon: Shield, label: "Regime Detection", desc: "XGBoost + LSTM + HMM ensemble" },
 ];
 
 export default function AgentsPage() {
     const [data, setData] = useState<DashboardData | null>(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetch("/api/dashboard", { cache: "no-store" })
             .then((r) => {
-                if (!r.ok) {
-                    throw new Error(`Dashboard API failed (${r.status})`);
-                }
+                if (!r.ok) throw new Error(`Dashboard API failed (${r.status})`);
                 return r.json();
             })
             .then(setData)
-            .catch(console.error);
+            .catch(console.error)
+            .finally(() => setLoading(false));
     }, []);
 
     return (
         <>
             <Navbar />
 
-            <main
-                style={{
-                    paddingTop: 100,
-                    paddingBottom: 80,
-                    minHeight: "100vh",
-                    background: "var(--bg-primary)",
-                }}
-            >
-                <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px" }}>
-
-                    {/* ===== HEADER ===== */}
-                    <div className="animate-fade-in-up" style={{ textAlign: "center", marginBottom: 64 }}>
-                        <div className="badge badge-bull" style={{ marginBottom: 16 }}>
-                            <Sparkles size={14} />
-                            MULTI-AGENT AI SYSTEM
+            <main className="page-compact">
+                <div className="page-container">
+                    {/* Header */}
+                    <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                        <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                <Sparkles size={18} color="var(--accent-emerald)" />
+                                <h1 style={{ margin: 0, fontSize: "1.4rem", fontWeight: 800 }}>
+                                    AI <span className="gradient-text">Agents</span>
+                                </h1>
+                            </div>
+                            <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                                Multi-agent system for portfolio analysis, risk management, and live market research
+                            </p>
                         </div>
-                        <h1
-                            style={{
-                                fontSize: "clamp(2rem, 5vw, 3rem)",
-                                fontWeight: 800,
-                                letterSpacing: "-0.03em",
-                                lineHeight: 1.15,
-                                marginBottom: 16,
-                            }}
-                        >
-                            Three AI Agents,{" "}
-                            <span className="gradient-text">One Mission</span>
-                        </h1>
-                        <p style={{ fontSize: "1.1rem", color: "var(--text-secondary)", maxWidth: 640, margin: "0 auto", lineHeight: 1.7 }}>
-                            Our multi-agent architecture combines portfolio management, risk monitoring, and market analysis
-                            into a collaborative intelligence system that explains every decision.
-                        </p>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {CAPABILITIES.map((cap) => (
+                                <div
+                                    key={cap.label}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "4px 10px",
+                                        background: "var(--bg-card)",
+                                        border: "1px solid var(--border-subtle)",
+                                        borderRadius: "var(--radius-sm)",
+                                        fontSize: "0.72rem",
+                                    }}
+                                >
+                                    <cap.icon size={12} color="var(--accent-emerald)" />
+                                    <span style={{ color: "var(--text-secondary)" }}>{cap.label}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
-                    {/* ===== AGENT CARDS ===== */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 24, marginBottom: 80 }}>
-                        {AGENTS.map((agent, i) => {
-                            const Icon = agent.icon;
-                            return (
-                                <div
-                                    key={agent.key}
-                                    className="glass-card animate-fade-in-up"
-                                    style={{ padding: 0, animationDelay: `${i * 0.15}s`, opacity: 0 }}
-                                >
-                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", minHeight: 300 }}>
-                                        {/* Left Info */}
-                                        <div style={{ padding: "32px 40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                    {/* Main Content Grid */}
+                    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 12, minHeight: "calc(100vh - 140px)" }}>
+                        {/* Left Sidebar - Agent Info */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div className="glass-card" style={{ padding: 12 }}>
+                                <h3 style={{ margin: "0 0 10px", fontSize: "0.85rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                    Available Agents
+                                </h3>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                    {AGENTS.map((agent) => {
+                                        const Icon = agent.icon;
+                                        return (
                                             <div
+                                                key={agent.key}
                                                 style={{
-                                                    width: 56,
-                                                    height: 56,
-                                                    borderRadius: "var(--radius-md)",
-                                                    background: agent.gradient,
                                                     display: "flex",
                                                     alignItems: "center",
-                                                    justifyContent: "center",
-                                                    marginBottom: 20,
-                                                    boxShadow: `0 8px 32px ${agent.color}40`,
+                                                    gap: 10,
+                                                    padding: "10px 12px",
+                                                    background: "var(--bg-tertiary)",
+                                                    borderRadius: "var(--radius-sm)",
+                                                    border: "1px solid var(--border-subtle)",
                                                 }}
                                             >
-                                                <Icon size={28} color="#fff" />
+                                                <div
+                                                    style={{
+                                                        width: 32,
+                                                        height: 32,
+                                                        borderRadius: "var(--radius-sm)",
+                                                        background: `${agent.color}20`,
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        justifyContent: "center",
+                                                        flexShrink: 0,
+                                                    }}
+                                                >
+                                                    <Icon size={16} color={agent.color} />
+                                                </div>
+                                                <div style={{ minWidth: 0 }}>
+                                                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)" }}>
+                                                        {agent.name}
+                                                    </div>
+                                                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                        {agent.shortDesc}
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <h2 style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: 8 }}>{agent.name}</h2>
-                                            <p style={{ color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: 20 }}>
-                                                {agent.description}
-                                            </p>
-                                            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-                                                {agent.capabilities.map((cap) => (
-                                                    <li
-                                                        key={cap}
-                                                        style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: 10,
-                                                            fontSize: "0.9rem",
-                                                            color: "var(--text-secondary)",
-                                                        }}
-                                                    >
-                                                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: agent.color, flexShrink: 0 }} />
-                                                        {cap}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
 
-                                        {/* Right Example */}
-                                        <div
-                                            style={{
-                                                padding: "32px 40px",
-                                                borderLeft: "1px solid var(--border-subtle)",
-                                                background: "rgba(0,0,0,0.15)",
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                justifyContent: "center",
-                                            }}
-                                        >
-                                            <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginBottom: 16 }}>
-                                                Sample Output (Static)
-                                            </div>
-                                            <div
-                                                style={{
-                                                    padding: "20px 24px",
-                                                    borderRadius: "var(--radius-md)",
-                                                    background: "var(--bg-card)",
-                                                    border: `1px solid ${agent.color}20`,
-                                                    fontStyle: "italic",
-                                                    color: "var(--text-secondary)",
-                                                    lineHeight: 1.7,
-                                                    fontSize: "0.9rem",
-                                                }}
-                                            >
-                                                {agent.example}
-                                            </div>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: "0.8rem", color: agent.color }}>
-                                                <span style={{ width: 8, height: 8, borderRadius: "50%", background: agent.color }} />
-                                                Card Preview · Not live chat
-                                            </div>
+                            {/* Context Info */}
+                            {data && (
+                                <div className="glass-card" style={{ padding: 12 }}>
+                                    <h3 style={{ margin: "0 0 10px", fontSize: "0.85rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                        Current Context
+                                    </h3>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem" }}>
+                                            <span style={{ color: "var(--text-muted)" }}>Regime</span>
+                                            <span className={`badge badge-${data.current_regime.toLowerCase()}`} style={{ padding: "2px 8px", fontSize: "0.7rem" }}>
+                                                {data.current_regime}
+                                            </span>
+                                        </div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem" }}>
+                                            <span style={{ color: "var(--text-muted)" }}>Active Signals</span>
+                                            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{data.signals.length}</span>
+                                        </div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem" }}>
+                                            <span style={{ color: "var(--text-muted)" }}>Factors w/ Holdings</span>
+                                            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{Object.keys(data.holdings).length}</span>
+                                        </div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem" }}>
+                                            <span style={{ color: "var(--text-muted)" }}>Top Signal CAGR</span>
+                                            <span style={{ color: "var(--accent-emerald)", fontWeight: 600 }}>
+                                                {data.signals.length > 0 ? `${Math.max(...data.signals.map(s => s.cagr)).toFixed(0)}%` : "—"}
+                                            </span>
                                         </div>
                                     </div>
                                 </div>
-                            );
-                        })}
-                    </div>
+                            )}
 
-                    {/* ===== HOW IT WORKS ===== */}
-                    <div style={{ marginBottom: 80 }}>
-                        <h2
-                            className="animate-fade-in-up"
-                            style={{
-                                fontSize: "1.75rem",
-                                fontWeight: 800,
-                                textAlign: "center",
-                                marginBottom: 48,
-                                letterSpacing: "-0.02em",
-                            }}
-                        >
-                            How the <span className="gradient-text">Pipeline</span> Works
-                        </h2>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24 }}>
-                            {ARCHITECTURE_STEPS.map((step, i) => {
-                                const StepIcon = step.icon;
-                                return (
-                                    <div
-                                        key={step.title}
-                                        className="glass-card animate-fade-in-up"
-                                        style={{ padding: 24, textAlign: "center", animationDelay: `${i * 0.1}s`, opacity: 0 }}
-                                    >
-                                        <div
-                                            style={{
-                                                width: 48,
-                                                height: 48,
-                                                borderRadius: "50%",
-                                                background: "var(--accent-emerald-dim)",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                margin: "0 auto 16px",
-                                            }}
-                                        >
-                                            <StepIcon size={22} color="var(--accent-emerald)" />
-                                        </div>
-                                        <div
-                                            style={{
-                                                fontSize: "0.7rem",
-                                                fontWeight: 700,
-                                                fontFamily: "var(--font-mono)",
-                                                color: "var(--accent-emerald)",
-                                                marginBottom: 8,
-                                            }}
-                                        >
-                                            STEP {i + 1}
-                                        </div>
-                                        <h3 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: 8 }}>{step.title}</h3>
-                                        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
-                                            {step.description}
-                                        </p>
-                                        {i < ARCHITECTURE_STEPS.length - 1 && (
-                                            <ArrowRight
-                                                size={16}
-                                                color="var(--text-muted)"
-                                                style={{
-                                                    position: "absolute",
-                                                    right: -20,
-                                                    top: "50%",
-                                                    transform: "translateY(-50%)",
-                                                }}
-                                            />
-                                        )}
-                                    </div>
-                                );
-                            })}
+                            {/* Research Tools */}
+                            <div className="glass-card" style={{ padding: 12 }}>
+                                <h3 style={{ margin: "0 0 10px", fontSize: "0.85rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                    Research Tools
+                                </h3>
+                                <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                                    <p style={{ margin: "0 0 6px" }}>The <strong style={{ color: "#f59e0b" }}>Research Analyst</strong> can:</p>
+                                    <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                        <li>Screen stocks by P/E, P/B, dividend yield</li>
+                                        <li>Fetch financial statements & ratios</li>
+                                        <li>Run technical scans (RSI, MACD)</li>
+                                        <li>Compare sector metrics</li>
+                                        <li>Access TEFAS fund data (836+ funds)</li>
+                                    </ul>
+                                </div>
+                            </div>
                         </div>
-                    </div>
 
-                    {/* ===== LIVE CHAT DEMO ===== */}
-                    {data && (
-                        <div style={{ marginBottom: 64 }}>
-                            <h2
-                                className="animate-fade-in-up"
-                                style={{
-                                    fontSize: "1.75rem",
-                                    fontWeight: 800,
-                                    textAlign: "center",
-                                    marginBottom: 12,
-                                    letterSpacing: "-0.02em",
-                                }}
-                            >
-                                Try the <span className="gradient-text">Agents</span> Live
-                            </h2>
-                            <p style={{ textAlign: "center", color: "var(--text-muted)", marginBottom: 32 }}>
-                                Switch between agents and ask questions about the portfolio, risk, or market conditions
-                            </p>
-                            <div style={{ maxWidth: 500, margin: "0 auto" }}>
+                        {/* Right Side - Chat Interface */}
+                        <div className="glass-card" style={{ padding: 0, display: "flex", flexDirection: "column", minHeight: 600 }}>
+                            {loading ? (
+                                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                                    Loading agent context...
+                                </div>
+                            ) : data ? (
                                 <AgentChat
                                     holdings={data.holdings}
                                     signals={data.signals}
                                     regime={data.current_regime}
                                 />
-                            </div>
+                            ) : (
+                                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", padding: 24, textAlign: "center" }}>
+                                    <div>
+                                        <p style={{ margin: "0 0 8px" }}>Failed to load dashboard context.</p>
+                                        <p style={{ margin: 0, fontSize: "0.8rem" }}>Agents still work but won&apos;t have portfolio context.</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                    )}
-
+                    </div>
                 </div>
             </main>
         </>
