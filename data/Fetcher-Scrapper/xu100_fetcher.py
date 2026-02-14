@@ -5,6 +5,7 @@ Usage:
     python "data/Fetch Scripts/xu100_fetcher.py" --start 2013-01-01 --end 2026-12-31 --out data/xu100_prices.csv
 """
 
+import logging
 import argparse
 import datetime as dt
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Iterable, Optional
 
 import pandas as pd
 import yfinance as yf
+logger = logging.getLogger(__name__)
 
 
 YFINANCE_XU100_TICKERS: tuple[str, ...] = ("XU100.IS", "XU100")
@@ -74,7 +76,7 @@ def main() -> None:
 
     end_date = args.end or dt.date.today().isoformat()
 
-    print(f"Downloading XU100 prices from {args.start} to {end_date}...")
+    logger.info(f"Downloading XU100 prices from {args.start} to {end_date}...")
     prices, ticker_used = download_xu100_prices(
         start=args.start,
         end=end_date,
@@ -84,7 +86,7 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prices.to_csv(out_path, index=False)
-    print(f"Saved {len(prices)} rows for {ticker_used} to {out_path}")
+    logger.info(f"Saved {len(prices)} rows for {ticker_used} to {out_path}")
 
 
 if __name__ == "__main__":

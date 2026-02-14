@@ -15,12 +15,12 @@ This should:
 - Capture mean reversion only when trend confirms
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Dict
+import pandas as pd
 
-
+logger = logging.getLogger(__name__)
 def build_trend_value_signals(
     close_df: pd.DataFrame,
     dates: pd.DatetimeIndex,
@@ -43,8 +43,8 @@ def build_trend_value_signals(
     Returns:
         DataFrame (dates x tickers) with composite scores
     """
-    print(f"\n🔧 Building Trend + Value composite signals...")
-    print(f"   SMA: {sma_short}/{sma_long}, Value filter: uptrend only")
+    logger.info("\n🔧 Building Trend + Value composite signals...")
+    logger.info(f"   SMA: {sma_short}/{sma_long}, Value filter: uptrend only")
 
     # Step 1: Calculate SMA signals (trend)
     sma_short_ma = close_df.rolling(sma_short, min_periods=sma_short).mean()
@@ -53,7 +53,7 @@ def build_trend_value_signals(
 
     # Step 2: Get or compute value signals
     if value_signals is None:
-        from signals.value_signals import build_value_signals
+        from Models.signals.value_signals import build_value_signals
         fundamentals = data_loader.load_fundamentals()
         value_signals = build_value_signals(fundamentals, close_df, dates, data_loader)
 
@@ -70,8 +70,8 @@ def build_trend_value_signals(
     filtered_signals = composite.notna().sum().sum()
     filter_pct = (1 - filtered_signals / total_signals) * 100 if total_signals > 0 else 0
 
-    print(f"  ✅ Trend + Value signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
-    print(f"     Uptrend filter removed {filter_pct:.1f}% of value signals")
+    logger.info(f"  ✅ Trend + Value signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
+    logger.info(f"     Uptrend filter removed {filter_pct:.1f}% of value signals")
 
     return composite
 
@@ -96,8 +96,8 @@ def build_trend_value_signals_v2(
         trend_weight: Weight for trend score (default 0.3)
         value_weight: Weight for value score (default 0.7)
     """
-    print(f"\n🔧 Building Trend + Value weighted signals...")
-    print(f"   Weights: Trend={trend_weight}, Value={value_weight}")
+    logger.info("\n🔧 Building Trend + Value weighted signals...")
+    logger.info(f"   Weights: Trend={trend_weight}, Value={value_weight}")
 
     # Calculate SMA score
     sma_short_ma = close_df.rolling(sma_short, min_periods=sma_short).mean()
@@ -106,7 +106,7 @@ def build_trend_value_signals_v2(
 
     # Get value signals
     if value_signals is None:
-        from signals.value_signals import build_value_signals
+        from Models.signals.value_signals import build_value_signals
         fundamentals = data_loader.load_fundamentals()
         value_signals = build_value_signals(fundamentals, close_df, dates, data_loader)
 
@@ -120,6 +120,6 @@ def build_trend_value_signals_v2(
     # Weighted combination
     composite = trend_weight * sma_z + value_weight * value_z
 
-    print(f"  ✅ Trend + Value weighted signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
+    logger.info(f"  ✅ Trend + Value weighted signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
 
     return composite

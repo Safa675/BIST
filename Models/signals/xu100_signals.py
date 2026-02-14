@@ -10,12 +10,11 @@ The portfolio engine will apply:
 This lets us compare "enhanced XU100" vs "buy and hold XU100".
 """
 
+import logging
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Optional
 
-
+logger = logging.getLogger(__name__)
 def build_xu100_signals(
     close_df: pd.DataFrame,
     dates: pd.DatetimeIndex,
@@ -36,7 +35,7 @@ def build_xu100_signals(
     Returns:
         DataFrame (dates x tickers) with constant score for XU100
     """
-    print("\n🔧 Building XU100 benchmark signal...")
+    logger.info("\n🔧 Building XU100 benchmark signal...")
     
     # Create a signal panel where only XU100 has a score
     # All other tickers will be NaN (excluded)
@@ -46,7 +45,7 @@ def build_xu100_signals(
     # (The actual value doesn't matter since it's the only stock)
     result['XU100'] = 1.0
     
-    print(f"  ✅ XU100 signal: {result.shape[0]} days × 1 ticker (XU100 only)")
-    print(f"  📊 This signal invests 100% in XU100 when regime allows")
+    logger.info(f"  ✅ XU100 signal: {result.shape[0]} days × 1 ticker (XU100 only)")
+    logger.info("  📊 This signal invests 100% in XU100 when regime allows")
     
     return result

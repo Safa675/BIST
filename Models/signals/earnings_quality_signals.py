@@ -11,21 +11,23 @@ Based on Quantpedia strategy: Earnings Quality Factor
 Signal: Composite quality score (percentile sum across all 4 metrics)
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-from typing import Dict, Optional
-import sys
+from typing import Dict
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
-    sum_ttm,
-    get_consolidated_sheet,
-    pick_row_from_sheet,
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
     apply_lag,
+    coerce_quarter_cols,
+    get_consolidated_sheet,
+    pick_row,
+    pick_row_from_sheet,
+    sum_ttm,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -78,6 +80,7 @@ def calculate_quality_metrics_for_ticker(
     ticker: str,
     data_loader,
     fundamentals_parquet: pd.DataFrame = None,
+    xlsx_path: Path | None = None,
 ) -> Dict:
     """
     Calculate all quality metrics for a single ticker.
@@ -88,22 +91,41 @@ def calculate_quality_metrics_for_ticker(
     - cfa: Operating CF / Total Assets (higher = better)
     - debt_ratio: Total Liabilities / Total Assets (lower = better)
     """
-    if fundamentals_parquet is None:
-        return {}
+    del data_loader  # Kept for backward-compatible signature.
 
-    inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
-    bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
-    cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+    use_parquet = fundamentals_parquet is not None
+    if use_parquet:
+        inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
+        bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
+        cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+    else:
+        inc = pd.DataFrame()
+        bs = pd.DataFrame()
+        cf = pd.DataFrame()
+
+    if inc.empty and bs.empty and xlsx_path is not None:
+        try:
+            inc = pd.read_excel(xlsx_path, sheet_name=INCOME_SHEET)
+            bs = pd.read_excel(xlsx_path, sheet_name=BALANCE_SHEET)
+            try:
+                cf = pd.read_excel(xlsx_path, sheet_name=CASH_FLOW_SHEET)
+            except Exception:
+                cf = pd.DataFrame()
+            use_parquet = False
+        except Exception:
+            return {}
 
     if inc.empty and bs.empty:
         return {}
 
+    row_picker = pick_row_from_sheet if use_parquet else pick_row
+
     # Extract rows
-    net_income_row = pick_row_from_sheet(inc, NET_INCOME_KEYS)
-    assets_row = pick_row_from_sheet(bs, TOTAL_ASSETS_KEYS)
-    equity_row = pick_row_from_sheet(bs, TOTAL_EQUITY_KEYS)
-    liabilities_row = pick_row_from_sheet(bs, TOTAL_LIABILITIES_KEYS)
-    opcf_row = pick_row_from_sheet(cf, OPERATING_CF_KEYS) if not cf.empty else None
+    net_income_row = row_picker(inc, NET_INCOME_KEYS)
+    assets_row = row_picker(bs, TOTAL_ASSETS_KEYS)
+    equity_row = row_picker(bs, TOTAL_EQUITY_KEYS)
+    liabilities_row = row_picker(bs, TOTAL_LIABILITIES_KEYS)
+    opcf_row = row_picker(cf, OPERATING_CF_KEYS) if not cf.empty else None
 
     # Coerce to series
     net_income = coerce_quarter_cols(net_income_row) if net_income_row is not None else pd.Series(dtype=float)
@@ -149,7 +171,7 @@ def build_earnings_quality_signals(
     Returns:
         DataFrame (dates x tickers) with quality scores
     """
-    print("\n🔧 Building earnings quality signals...")
+    logger.info("\n🔧 Building earnings quality signals...")
 
     panels = {
         'accruals': {},      # Lower = better (will be negated)
@@ -158,15 +180,19 @@ def build_earnings_quality_signals(
         'debt_ratio': {},    # Lower = better (will be negated)
     }
 
-    fundamentals_parquet = data_loader.load_fundamentals_parquet()
+    fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     count = 0
     for ticker, fund_data in fundamentals.items():
         if ticker not in close_df.columns:
             continue
 
+        xlsx_path = fund_data.get("path") if isinstance(fund_data, dict) else None
         metrics = calculate_quality_metrics_for_ticker(
-            ticker, data_loader, fundamentals_parquet
+            ticker,
+            data_loader,
+            fundamentals_parquet,
+            xlsx_path=xlsx_path,
         )
 
         if not metrics:
@@ -223,10 +249,10 @@ def build_earnings_quality_signals(
 
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers...")
+            logger.info(f"  Processed {count} tickers...")
 
     # Cross-sectional z-score normalization
-    print("  Normalizing quality metrics (z-score per date)...")
+    logger.info("  Normalizing quality metrics (z-score per date)...")
     normalized_panels = {}
     for panel_name, panel_dict in panels.items():
         if panel_dict:
@@ -237,7 +263,7 @@ def build_earnings_quality_signals(
             normalized_panels[panel_name] = df_zscore
 
     # Combine into composite score
-    print("  Combining into composite quality score...")
+    logger.info("  Combining into composite quality score...")
     composite_panel = {}
 
     for ticker in close_df.columns:
@@ -251,5 +277,5 @@ def build_earnings_quality_signals(
             composite_panel[ticker] = composite
 
     result = pd.DataFrame(composite_panel, index=dates)
-    print(f"  ✅ Earnings quality signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Earnings quality signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

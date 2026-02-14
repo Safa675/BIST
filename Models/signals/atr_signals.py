@@ -9,16 +9,14 @@ Uses borsapy ATR indicator for volatility-adjusted trend signals:
 Signal: Inverted normalized ATR — calmer stocks rank highest
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_atr_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -42,7 +40,7 @@ def build_atr_signals(
         DataFrame (dates x tickers) with inverted ATR% scores
         Higher score = lower volatility = calmer stock
     """
-    print(f"\n🔧 Building ATR({period}) low-volatility signals...")
+    logger.info(f"\n🔧 Building ATR({period}) low-volatility signals...")
 
     atr_panel = BorsapyIndicators.build_atr_panel(high_df, low_df, close_df, period=period)
 
@@ -60,7 +58,7 @@ def build_atr_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
 
-    print(f"  ✅ ATR signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ ATR signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

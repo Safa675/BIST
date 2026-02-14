@@ -8,17 +8,14 @@ Uses borsapy Supertrend indicator for trend-following signals:
 Signal: +1 (uptrend, buy) or -1 (downtrend, avoid)
 """
 
+import logging
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
 
 # Add paths
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_supertrend_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -48,7 +45,7 @@ def build_supertrend_signals(
         - +1: Price above Supertrend line (bullish, hold/buy)
         - -1: Price below Supertrend line (bearish, avoid/sell)
     """
-    print(f"\n🔧 Building Supertrend({period}, {multiplier}) direction signals...")
+    logger.info(f"\n🔧 Building Supertrend({period}, {multiplier}) direction signals...")
 
     # Build Supertrend direction panel using borsapy
     st_panel = BorsapyIndicators.build_supertrend_panel(
@@ -69,9 +66,9 @@ def build_supertrend_signals(
         latest = result.iloc[-1].dropna()
         n_up = (latest > 0).sum()
         n_down = (latest < 0).sum()
-        print(f"     Latest: {n_up} uptrend, {n_down} downtrend")
+        logger.info(f"     Latest: {n_up} uptrend, {n_down} downtrend")
 
-    print(f"  ✅ Supertrend signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ Supertrend signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

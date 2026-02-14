@@ -1,6 +1,8 @@
+import logging
 import os
 import time
 from playwright.sync_api import sync_playwright
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 BASE_DIR = "Fintables_Data"
@@ -86,7 +88,7 @@ def download_file_robust(page, ticker, type_name, url):
     file_path = os.path.join(folder_path, filename)
 
     if os.path.exists(file_path):
-        print(f"   -> [SKIP] {filename} exists.")
+        logger.info(f"   -> [SKIP] {filename} exists.")
         return
 
     try:
@@ -106,7 +108,7 @@ def download_file_robust(page, ticker, type_name, url):
             download_button = page.locator(".fa-file-excel").first
             
         if not download_button:
-            print(f"   -> [FAIL] Button not found.")
+            logger.info(f"   -> [FAIL] Button not found.")
             return
 
         # Start Download
@@ -116,14 +118,14 @@ def download_file_robust(page, ticker, type_name, url):
         
         download = download_info.value
         download.save_as(file_path)
-        print(f"   -> [SUCCESS] Saved {filename}")
+        logger.info(f"   -> [SUCCESS] Saved {filename}")
         
         time.sleep(WAIT_TIME)
 
     except Exception as e:
         # Print a short error message so it doesn't flood the console
         error_msg = str(e).split("\n")[0]
-        print(f"   -> [ERROR] {ticker} {type_name}: {error_msg}")
+        logger.error(f"   -> [ERROR] {ticker} {type_name}: {error_msg}")
 
 def main():
     if not os.path.exists(BASE_DIR):
@@ -134,20 +136,20 @@ def main():
         context = browser.new_context(viewport={"width": 1920, "height": 1080}, accept_downloads=True)
         page = context.new_page()
 
-        print("---------------------------------------------------------")
-        print("STEP 1: LOGIN REQUIRED")
-        print("1. Go to fintables.com/giris and LOG IN.")
-        print("2. Make sure your Premium session is active.")
-        print("3. Come back here and press ENTER.")
-        print("---------------------------------------------------------")
+        logger.info("---------------------------------------------------------")
+        logger.info("STEP 1: LOGIN REQUIRED")
+        logger.info("1. Go to fintables.com/giris and LOG IN.")
+        logger.info("2. Make sure your Premium session is active.")
+        logger.info("3. Come back here and press ENTER.")
+        logger.info("---------------------------------------------------------")
         
         page.goto("https://fintables.com/giris")
         input("Press Enter AFTER you are fully logged in...")
 
-        print(f"Starting downloads...")
+        logger.info(f"Starting downloads...")
 
         for index, ticker in enumerate(TICKERS):
-            print(f"[{index+1}/{len(TICKERS)}] Processing {ticker}...")
+            logger.info(f"[{index+1}/{len(TICKERS)}] Processing {ticker}...")
 
             # Income Statement
             url_income = f"https://fintables.com/sirketler/{ticker}/finansal-tablolar/gelir-tablosu"
@@ -157,7 +159,7 @@ def main():
             url_balance = f"https://fintables.com/sirketler/{ticker}/finansal-tablolar/bilanco"
             download_file_robust(page, ticker, "Bilanco", url_balance)
 
-        print("\nAll tasks completed!")
+        logger.info("\nAll tasks completed!")
         browser.close()
 
 if __name__ == "__main__":

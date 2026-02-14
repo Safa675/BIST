@@ -8,16 +8,13 @@ Uses borsapy Parabolic SAR indicator for trend-following signals:
 Signal: Parabolic SAR direction (+1 uptrend / -1 downtrend)
 """
 
+import logging
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_parabolic_sar_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -45,7 +42,7 @@ def build_parabolic_sar_signals(
         DataFrame (dates x tickers) with SAR direction
         +1 = uptrend (buy), -1 = downtrend (avoid)
     """
-    print(f"\n🔧 Building Parabolic SAR({af_start},{af_step},{af_max}) signals...")
+    logger.info(f"\n🔧 Building Parabolic SAR({af_start},{af_step},{af_max}) signals...")
 
     tickers = close_df.columns
     signal_data = {}
@@ -75,9 +72,9 @@ def build_parabolic_sar_signals(
         latest = result.iloc[-1].dropna()
         n_up = (latest > 0).sum()
         n_down = (latest < 0).sum()
-        print(f"     Latest: {n_up} bullish, {n_down} bearish")
+        logger.info(f"     Latest: {n_up} bullish, {n_down} bearish")
 
-    print(f"  ✅ Parabolic SAR signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ Parabolic SAR signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

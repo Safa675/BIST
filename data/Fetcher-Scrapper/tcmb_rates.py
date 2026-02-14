@@ -3,11 +3,13 @@ TCMB (Turkish Central Bank) Risk-Free Rate Fetcher
 Fetches Turkish deposit rates from EVDS (Electronic Data Distribution System)
 """
 
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
+logger = logging.getLogger(__name__)
 
 class TCMBRateFetcher:
     """
@@ -83,7 +85,7 @@ class TCMBRateFetcher:
         if not force_refresh and self.cache_file.exists():
             cached = pd.read_csv(self.cache_file, index_col=0, parse_dates=True).sort_index()
             if self._cache_covers_window(cached.index, requested_start, requested_end):
-                print(f"Loading cached TCMB rates from {self.cache_file}")
+                logger.info(f"Loading cached TCMB rates from {self.cache_file}")
                 windowed = cached[(cached.index >= requested_start) & (cached.index <= requested_end)]
                 if not windowed.empty:
                     self.rates_data = windowed
@@ -96,11 +98,11 @@ class TCMBRateFetcher:
             # Cache the data
             self.cache_dir.mkdir(exist_ok=True, parents=True)
             self.rates_data.to_csv(self.cache_file)
-            print(f"TCMB rates cached to {self.cache_file}")
+            logger.info(f"TCMB rates cached to {self.cache_file}")
             
         except Exception as e:
-            print(f"Warning: Could not fetch from EVDS: {e}")
-            print("Falling back to approximation based on USD/TRY...")
+            logger.info(f"Warning: Could not fetch from EVDS: {e}")
+            logger.info("Falling back to approximation based on USD/TRY...")
             self.rates_data = self._approximate_rates(start_date, end_date)
         
         return self.rates_data
@@ -129,7 +131,7 @@ class TCMBRateFetcher:
         # TP.FG2.A01 - Weighted Average Interest Rate on Deposits
         series_code = 'TP.FG2.A01'  # Weighted average deposit rate
         
-        print(f"Fetching TCMB deposit rates (series: {series_code})...")
+        logger.info(f"Fetching TCMB deposit rates (series: {series_code})...")
         
         # Fetch data
         if end_date is None:
@@ -153,8 +155,8 @@ class TCMBRateFetcher:
         # Forward fill missing values
         data = data.resample('D').ffill()
         
-        print(f"Fetched {len(data)} days of TCMB deposit rates")
-        print(f"Rate range: {data['deposit_rate'].min():.2%} to {data['deposit_rate'].max():.2%}")
+        logger.info(f"Fetched {len(data)} days of TCMB deposit rates")
+        logger.info(f"Rate range: {data['deposit_rate'].min():.2%} to {data['deposit_rate'].max():.2%}")
         
         return data
     
@@ -165,7 +167,7 @@ class TCMBRateFetcher:
         """
         import yfinance as yf
         
-        print("Approximating Turkish deposit rates from USD/TRY...")
+        logger.info("Approximating Turkish deposit rates from USD/TRY...")
         
         # Fetch USD/TRY
         usdtry = yf.download('TRY=X', start=start_date, end=end_date, progress=False)
@@ -203,9 +205,9 @@ class TCMBRateFetcher:
         rates_df = pd.DataFrame(index=approx_rate.index)
         rates_df['deposit_rate'] = approx_rate.values
         
-        print(f"Approximated {len(rates_df)} days of deposit rates")
-        print(f"Rate range: {rates_df['deposit_rate'].min():.2%} to {rates_df['deposit_rate'].max():.2%}")
-        print("Note: These are approximations. For accurate rates, use EVDS API with api_key.")
+        logger.info(f"Approximated {len(rates_df)} days of deposit rates")
+        logger.info(f"Rate range: {rates_df['deposit_rate'].min():.2%} to {rates_df['deposit_rate'].max():.2%}")
+        logger.info("Note: These are approximations. For accurate rates, use EVDS API with api_key.")
         
         return rates_df
     
@@ -236,9 +238,9 @@ class TCMBRateFetcher:
 
 if __name__ == "__main__":
     # Test the fetcher
-    print("="*70)
-    print("TCMB DEPOSIT RATE FETCHER TEST")
-    print("="*70)
+    logger.info("="*70)
+    logger.info("TCMB DEPOSIT RATE FETCHER TEST")
+    logger.info("="*70)
     
     # Initialize fetcher (without API key, will use approximation)
     fetcher = TCMBRateFetcher()
@@ -246,29 +248,29 @@ if __name__ == "__main__":
     # Fetch rates
     rates = fetcher.fetch_rates(start_date='2013-01-01', end_date='2026-01-23')
     
-    print("\n" + "="*70)
-    print("DEPOSIT RATE STATISTICS")
-    print("="*70)
-    print(f"\nPeriod: {rates.index[0]} to {rates.index[-1]}")
-    print(f"Observations: {len(rates)}")
-    print(f"\nRate Statistics:")
-    print(f"  Mean: {rates['deposit_rate'].mean():.2%}")
-    print(f"  Median: {rates['deposit_rate'].median():.2%}")
-    print(f"  Min: {rates['deposit_rate'].min():.2%}")
-    print(f"  Max: {rates['deposit_rate'].max():.2%}")
-    print(f"  Std: {rates['deposit_rate'].std():.2%}")
+    logger.info("\n" + "="*70)
+    logger.info("DEPOSIT RATE STATISTICS")
+    logger.info("="*70)
+    logger.info(f"\nPeriod: {rates.index[0]} to {rates.index[-1]}")
+    logger.info(f"Observations: {len(rates)}")
+    logger.info(f"\nRate Statistics:")
+    logger.info(f"  Mean: {rates['deposit_rate'].mean():.2%}")
+    logger.info(f"  Median: {rates['deposit_rate'].median():.2%}")
+    logger.info(f"  Min: {rates['deposit_rate'].min():.2%}")
+    logger.info(f"  Max: {rates['deposit_rate'].max():.2%}")
+    logger.info(f"  Std: {rates['deposit_rate'].std():.2%}")
     
-    print("\n" + "="*70)
-    print("SAMPLE RATES (Recent)")
-    print("="*70)
-    print(rates.tail(10))
+    logger.info("\n" + "="*70)
+    logger.info("SAMPLE RATES (Recent)")
+    logger.info("="*70)
+    logger.info(rates.tail(10))
     
-    print("\n" + "="*70)
-    print("USAGE INSTRUCTIONS")
-    print("="*70)
-    print("\nTo use actual TCMB rates:")
-    print("1. Get API key from: https://evds2.tcmb.gov.tr/")
-    print("2. Install evds: pip install evds")
-    print("3. Use: fetcher = TCMBRateFetcher(api_key='YOUR_KEY')")
-    print("\nWithout API key, approximation based on USD/TRY is used.")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("USAGE INSTRUCTIONS")
+    logger.info("="*70)
+    logger.info("\nTo use actual TCMB rates:")
+    logger.info("1. Get API key from: https://evds2.tcmb.gov.tr/")
+    logger.info("2. Install evds: pip install evds")
+    logger.info("3. Use: fetcher = TCMBRateFetcher(api_key='YOUR_KEY')")
+    logger.info("\nWithout API key, approximation based on USD/TRY is used.")
+    logger.info("="*70)

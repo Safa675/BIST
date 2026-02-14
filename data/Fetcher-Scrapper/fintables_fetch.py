@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import logging
 import argparse
 import csv
 import html
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_CONFIG = {
@@ -520,6 +522,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        logger.info(f"Error: {exc}")
         return_code = 1
         raise SystemExit(return_code)

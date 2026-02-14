@@ -10,17 +10,15 @@ Uses borsapy ADX indicator for trend-strength signals:
 Signal: Positive = strong uptrend, Negative = strong downtrend
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-import sys
+import pandas as pd
 
 # Add paths
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_adx_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -49,7 +47,7 @@ def build_adx_signals(
         - Near zero: No trend or weak trend
         - Large negative: Strong downtrend (DI- >> DI+, high ADX)
     """
-    print(f"\n🔧 Building ADX({period}) directional trend signals...")
+    logger.info(f"\n🔧 Building ADX({period}) directional trend signals...")
 
     tickers = close_df.columns
     signal_data = {}
@@ -83,7 +81,7 @@ def build_adx_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
 
-    print(f"  ✅ ADX signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ ADX signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

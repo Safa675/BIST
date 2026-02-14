@@ -9,23 +9,25 @@ Calculates composite value scores based on 5 ratios:
 5. EBITDA/EV (EBITDA / Enterprise Value)
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
-    sum_ttm,
-    get_consolidated_sheet,
-    pick_row_from_sheet,
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
+    get_consolidated_sheet,
+    pick_row,
+    pick_row_from_sheet,
+    sum_ttm,
     validate_signal_panel_schema,
 )
 
+logger = logging.getLogger(__name__)
 
 # Fundamental data keys
 INCOME_SHEET = "Gelir Tablosu (Çeyreklik)"
@@ -150,9 +152,9 @@ def build_value_signals(
     Returns:
         DataFrame (dates x tickers) with composite value scores
     """
-    print("\n🔧 Building value signals...")
+    logger.info("\n🔧 Building value signals...")
     if enabled_metrics:
-        print(f"  Enabled metrics: {', '.join(enabled_metrics)}")
+        logger.info(f"  Enabled metrics: {', '.join(enabled_metrics)}")
     
     # Build individual ratio panels
     panels = {
@@ -245,11 +247,11 @@ def build_value_signals(
         
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers...")
+            logger.info(f"  Processed {count} tickers...")
     
     # Cross-sectional z-score normalization (Bug #2 fix)
     # Normalize each ratio type before combining to prevent scale bias
-    print("  Normalizing ratios (z-score per date)...")
+    logger.info("  Normalizing ratios (z-score per date)...")
     normalized_panels = {}
     for panel_name, panel_dict in panels.items():
         if panel_dict:
@@ -263,7 +265,7 @@ def build_value_signals(
             normalized_panels[panel_name] = df_zscore
     
     # Combine into composite score
-    print("  Combining into composite value score...")
+    logger.info("  Combining into composite value score...")
     composite_panel = {}
 
     default_weights = {
@@ -296,12 +298,17 @@ def build_value_signals(
             composite_panel[ticker] = composite
     
     result = pd.DataFrame(composite_panel, index=dates)
+
+    # Apply staleness-based down-weighting (Part D)
+    result = apply_staleness_weighting(result)
+
     result = validate_signal_panel_schema(
         result,
         dates=dates,
         tickers=close_df.columns,
         signal_name="value",
         context="final score panel",
+        dtype=np.float32,
     )
-    print(f"  ✅ Value signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Value signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

@@ -20,12 +20,14 @@ Schedule with cron (every weekday at 18:45 Istanbul time):
     45 18 * * 1-5  cd /home/safa/Documents/Markets/BIST && python data/Fetcher-Scrapper/update_prices.py >> data/update.log 2>&1
 """
 
+import logging
 import argparse
 import datetime as dt
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+logger = logging.getLogger(__name__)
 
 try:
     import borsapy as bp
@@ -129,7 +131,7 @@ def fetch_bist_tickers(prefer_borsapy: bool = False) -> list[str]:
         try:
             return sorted(bp.Index("XUTUM").component_symbols or [])
         except Exception as exc:
-            print(f"  Warning: could not fetch ticker list from borsapy/XUTUM: {exc}")
+            logger.info(f"  Warning: could not fetch ticker list from borsapy/XUTUM: {exc}")
 
     try:
         tables = pd.read_html(MNYET_URL)
@@ -146,10 +148,10 @@ def fetch_bist_tickers(prefer_borsapy: bool = False) -> list[str]:
         )
         return sorted(t for t in tickers if t.isalpha())
     except Exception as exc:
-        print(f"  Warning: could not fetch ticker list from {MNYET_URL}: {exc}")
+        logger.info(f"  Warning: could not fetch ticker list from {MNYET_URL}: {exc}")
         fallback = _fallback_bist_tickers_from_existing()
         if fallback:
-            print(f"  Using {len(fallback)} tickers from local price history fallback")
+            logger.info(f"  Using {len(fallback)} tickers from local price history fallback")
             return fallback
         raise RuntimeError("Ticker universe fetch failed and no local fallback is available") from exc
 
@@ -159,30 +161,30 @@ def fetch_bist_tickers(prefer_borsapy: bool = False) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
-    print("\n" + "=" * 60)
-    print("BIST STOCK PRICES")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("BIST STOCK PRICES")
+    logger.info("=" * 60)
 
     last = last_date_in_csv(BIST_PRICES)
     # Start from the day after the last row (yfinance start is inclusive)
     start = (last + dt.timedelta(days=1)).isoformat()
     end = dt.date.today().isoformat()
 
-    print(f"  Last date in CSV : {last}")
-    print(f"  Fetch window     : {start}  ->  {end}")
+    logger.info(f"  Last date in CSV : {last}")
+    logger.info(f"  Fetch window     : {start}  ->  {end}")
 
     if start >= end:
-        print("  Already up to date.")
+        logger.info("  Already up to date.")
         return
 
     use_borsapy = _wants_borsapy(source)
     if dry_run:
         provider = "borsapy" if use_borsapy else "yfinance"
-        print(f"  [dry-run] Would fetch BIST prices via {provider}.")
+        logger.info(f"  [dry-run] Would fetch BIST prices via {provider}.")
         return
 
     tickers = fetch_bist_tickers(prefer_borsapy=use_borsapy)
-    print(f"  Ticker list      : {len(tickers)} BIST tickers")
+    logger.info(f"  Ticker list      : {len(tickers)} BIST tickers")
 
     new_df = pd.DataFrame()
 
@@ -198,11 +200,11 @@ def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
             )
             new_df = _coerce_price_columns(new_df, BIST_COLS)
             if not new_df.empty:
-                print("  Data source      : borsapy")
+                logger.info("  Data source      : borsapy")
         except Exception as exc:
             if source == "borsapy":
                 raise
-            print(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
+            logger.info(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
 
     if new_df.empty and source != "borsapy":
         yf_tickers = [f"{t}.IS" for t in tickers]
@@ -217,7 +219,7 @@ def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
         )
 
         if data is None or data.empty:
-            print("  No new data returned by yfinance.")
+            logger.info("  No new data returned by yfinance.")
             return
 
         records = []
@@ -234,14 +236,14 @@ def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
             records.append(df_single)
 
         if not records:
-            print("  No records after parsing.")
+            logger.info("  No records after parsing.")
             return
 
         new_df = _coerce_price_columns(pd.concat(records, ignore_index=True), BIST_COLS)
-        print("  Data source      : yfinance")
+        logger.info("  Data source      : yfinance")
 
     if new_df.empty:
-        print("  No valid new rows after cleanup.")
+        logger.info("  No valid new rows after cleanup.")
         return
 
     combined = _append_and_persist(
@@ -251,11 +253,11 @@ def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
         dedupe_cols=["Date", "Ticker"],
         sort_cols=["Ticker", "Date"],
     )
-    print(f"  ✅ Parquet updated: {BIST_PRICES_PARQUET.name}")
+    logger.info(f"  ✅ Parquet updated: {BIST_PRICES_PARQUET.name}")
 
     new_last = combined["Date"].max().date()
-    print(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
-    print(f"  Total rows: {len(combined)}")
+    logger.info(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
+    logger.info(f"  Total rows: {len(combined)}")
 
 
 # ---------------------------------------------------------------------------
@@ -263,25 +265,25 @@ def update_bist_prices(dry_run: bool = False, source: str = "auto") -> None:
 # ---------------------------------------------------------------------------
 
 def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
-    print("\n" + "=" * 60)
-    print("XU100 INDEX PRICES")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("XU100 INDEX PRICES")
+    logger.info("=" * 60)
 
     last = last_date_in_csv(XU100_PRICES)
     start = (last + dt.timedelta(days=1)).isoformat()
     end = dt.date.today().isoformat()
 
-    print(f"  Last date in CSV : {last}")
-    print(f"  Fetch window     : {start}  ->  {end}")
+    logger.info(f"  Last date in CSV : {last}")
+    logger.info(f"  Fetch window     : {start}  ->  {end}")
 
     if start >= end:
-        print("  Already up to date.")
+        logger.info("  Already up to date.")
         return
 
     use_borsapy = _wants_borsapy(source)
     if dry_run:
         provider = "borsapy" if use_borsapy else "yfinance"
-        print(f"  [dry-run] Would fetch XU100 prices via {provider}.")
+        logger.info(f"  [dry-run] Would fetch XU100 prices via {provider}.")
         return
 
     new_df = pd.DataFrame()
@@ -293,11 +295,11 @@ def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
                 new_df = hist.copy().reset_index()
                 new_df["Ticker"] = "XU100.IS"
                 new_df = _coerce_price_columns(new_df, XU100_COLS)
-                print("  Data source      : borsapy")
+                logger.info("  Data source      : borsapy")
         except Exception as exc:
             if source == "borsapy":
                 raise
-            print(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
+            logger.info(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
 
     if new_df.empty and source != "borsapy":
         for ticker in ("XU100.IS", "XU100"):
@@ -312,7 +314,7 @@ def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
             if data is not None and not data.empty:
                 break
         else:
-            print("  No XU100 data returned.")
+            logger.info("  No XU100 data returned.")
             return
 
         # Flatten MultiIndex columns that yfinance may return for single tickers
@@ -321,10 +323,10 @@ def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
         new_df = data.copy().reset_index()
         new_df["Ticker"] = "XU100.IS"
         new_df = _coerce_price_columns(new_df, XU100_COLS)
-        print("  Data source      : yfinance")
+        logger.info("  Data source      : yfinance")
 
     if new_df.empty:
-        print("  No valid new rows.")
+        logger.info("  No valid new rows.")
         return
 
     combined = _append_and_persist(
@@ -334,10 +336,10 @@ def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
         dedupe_cols=["Date"],
         sort_cols=["Date"],
     )
-    print(f"  ✅ Parquet updated: {XU100_PRICES_PARQUET.name}")
+    logger.info(f"  ✅ Parquet updated: {XU100_PRICES_PARQUET.name}")
 
     new_last = combined["Date"].max().date()
-    print(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
+    logger.info(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
 
 
 # ---------------------------------------------------------------------------
@@ -345,25 +347,25 @@ def update_xu100_prices(dry_run: bool = False, source: str = "auto") -> None:
 # ---------------------------------------------------------------------------
 
 def update_xau_try(dry_run: bool = False, source: str = "auto") -> None:
-    print("\n" + "=" * 60)
-    print("XAU/TRY PRICES")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("XAU/TRY PRICES")
+    logger.info("=" * 60)
 
     last = last_date_in_csv(XAU_TRY_PRICES)
     start = (last + dt.timedelta(days=1)).isoformat()
     end = dt.date.today().isoformat()
 
-    print(f"  Last date in CSV : {last}")
-    print(f"  Fetch window     : {start}  ->  {end}")
+    logger.info(f"  Last date in CSV : {last}")
+    logger.info(f"  Fetch window     : {start}  ->  {end}")
 
     if start >= end:
-        print("  Already up to date.")
+        logger.info("  Already up to date.")
         return
 
     use_borsapy = _wants_borsapy(source)
     if dry_run:
         provider = "borsapy" if use_borsapy else "yfinance"
-        print(f"  [dry-run] Would fetch XAU/TRY prices via {provider}.")
+        logger.info(f"  [dry-run] Would fetch XAU/TRY prices via {provider}.")
         return
 
     new_df = pd.DataFrame()
@@ -381,11 +383,11 @@ def update_xau_try(dry_run: bool = False, source: str = "auto") -> None:
             new_df = new_df.dropna()
             new_df.index.name = "Date"
             if not new_df.empty:
-                print("  Data source      : borsapy")
+                logger.info("  Data source      : borsapy")
         except Exception as exc:
             if source == "borsapy":
                 raise
-            print(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
+            logger.info(f"  Warning: borsapy fetch failed, falling back to yfinance: {exc}")
 
     if new_df.empty and source != "borsapy":
         # Download gold (USD) and USD/TRY from yfinance
@@ -406,10 +408,10 @@ def update_xau_try(dry_run: bool = False, source: str = "auto") -> None:
         new_df["XAU_TRY"] = new_df["XAU_USD"] * new_df["USD_TRY"]
         new_df = new_df.dropna()
         new_df.index.name = "Date"
-        print("  Data source      : yfinance")
+        logger.info("  Data source      : yfinance")
 
     if new_df.empty:
-        print("  No valid new rows.")
+        logger.info("  No valid new rows.")
         return
 
     existing = pd.read_csv(XAU_TRY_PRICES, parse_dates=["Date"], index_col="Date")
@@ -420,10 +422,10 @@ def update_xau_try(dry_run: bool = False, source: str = "auto") -> None:
     
     # Also save as parquet for faster loading
     combined.to_parquet(XAU_TRY_PARQUET)
-    print(f"  ✅ Parquet updated: {XAU_TRY_PARQUET.name}")
+    logger.info(f"  ✅ Parquet updated: {XAU_TRY_PARQUET.name}")
 
     new_last = combined.index.max().date()
-    print(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
+    logger.info(f"  Appended {len(new_df)} rows  ->  new last date: {new_last}")
 
 
 # ---------------------------------------------------------------------------
@@ -447,14 +449,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(f"{'=' * 60}")
-    print(f"BIST DATA UPDATER  —  {dt.datetime.now():%Y-%m-%d %H:%M}")
-    print(f"{'=' * 60}")
-    print(f"Source mode: {args.source}")
+    logger.info(f"{'=' * 60}")
+    logger.info(f"BIST DATA UPDATER  —  {dt.datetime.now():%Y-%m-%d %H:%M}")
+    logger.info(f"{'=' * 60}")
+    logger.info(f"Source mode: {args.source}")
 
     if args.source == "borsapy" and not _wants_borsapy("borsapy"):
-        print("ERROR: --source borsapy selected but borsapy integration is not available.")
-        print("Install borsapy and ensure `data/Fetcher-Scrapper/borsapy_client.py` is importable.")
+        logger.error("ERROR: --source borsapy selected but borsapy integration is not available.")
+        logger.info("Install borsapy and ensure `data/Fetcher-Scrapper/borsapy_client.py` is importable.")
         return 1
 
     failures: list[tuple[str, Exception]] = []
@@ -469,18 +471,18 @@ def main() -> int:
             step(dry_run=args.dry_run, source=args.source)
         except Exception as exc:
             failures.append((label, exc))
-            print(f"\n  ERROR in {label}: {exc}")
+            logger.error(f"\n  ERROR in {label}: {exc}")
 
-    print("\n" + "=" * 60)
+    logger.info("\n" + "=" * 60)
     if failures:
-        print(f"UPDATES COMPLETED WITH {len(failures)} FAILURE(S)")
+        logger.info(f"UPDATES COMPLETED WITH {len(failures)} FAILURE(S)")
         for label, exc in failures:
-            print(f"  - {label}: {exc}")
-        print("=" * 60)
+            logger.info(f"  - {label}: {exc}")
+        logger.info("=" * 60)
         return 1
 
-    print("ALL UPDATES COMPLETE")
-    print("=" * 60)
+    logger.info("ALL UPDATES COMPLETE")
+    logger.info("=" * 60)
     return 0
 
 

@@ -13,15 +13,13 @@ Based on Quantpedia strategy: Pairs Trading with Stocks
 Signal: Z-score of spread for identified pairs
 """
 
-import pandas as pd
+import logging
+from typing import Dict, List, Tuple
+
 import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # PAIRS TRADING PARAMETERS
 # ============================================================================
@@ -199,26 +197,26 @@ def build_pairs_trading_signals(
     Returns:
         DataFrame (dates x tickers) with pairs trading scores
     """
-    print("\n🔧 Building pairs trading signals...")
-    print(f"  Formation Period: {FORMATION_PERIOD} days")
-    print(f"  Top Pairs: {TOP_PAIRS}")
-    print(f"  Entry Z-score: ±{ENTRY_ZSCORE}")
-    print(f"  Min Correlation: {MIN_CORRELATION}")
+    logger.info("\n🔧 Building pairs trading signals...")
+    logger.info(f"  Formation Period: {FORMATION_PERIOD} days")
+    logger.info(f"  Top Pairs: {TOP_PAIRS}")
+    logger.info(f"  Entry Z-score: ±{ENTRY_ZSCORE}")
+    logger.info(f"  Min Correlation: {MIN_CORRELATION}")
 
     # Initialize result
     result = pd.DataFrame(0.0, index=dates, columns=close_df.columns)
 
     # Find pairs using full history
     pairs = find_pairs(close_df, FORMATION_PERIOD, TOP_PAIRS, MIN_CORRELATION)
-    print(f"  Found {len(pairs)} pairs")
+    logger.info(f"  Found {len(pairs)} pairs")
 
     if len(pairs) == 0:
-        print("  ⚠️ No pairs found, returning neutral signals")
+        logger.warning("  ⚠️ No pairs found, returning neutral signals")
         return result
 
     # Show top 5 pairs
     for i, (t1, t2, dist) in enumerate(pairs[:5]):
-        print(f"    Pair {i+1}: {t1} - {t2} (distance: {dist:.4f})")
+        logger.info(f"    Pair {i+1}: {t1} - {t2} (distance: {dist:.4f})")
 
     # Calculate z-scores for all pairs
     zscore_dict = calculate_spread_zscore(close_df, pairs, FORMATION_PERIOD)
@@ -253,8 +251,8 @@ def build_pairs_trading_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1]
         n_active = (latest.abs() > 0.1).sum()
-        print(f"  Stocks in active pairs (latest): {n_active}")
+        logger.info(f"  Stocks in active pairs (latest): {n_active}")
 
-    print(f"  ✅ Pairs trading signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Pairs trading signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

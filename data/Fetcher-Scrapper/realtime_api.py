@@ -22,10 +22,12 @@ Usage:
     python realtime_api.py market
 """
 
+import logging
 import sys
 import json
 import argparse
 from pathlib import Path
+logger = logging.getLogger(__name__)
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -173,7 +175,7 @@ def main():
         result = get_market_summary()
 
     # Output JSON
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    logger.info(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":

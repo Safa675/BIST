@@ -16,21 +16,21 @@ Scoring:
 - Momentum must be positive to get a non-zero score
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
+import logging
 
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def calculate_market_cap(close_df: pd.DataFrame, data_loader=None) -> pd.DataFrame:
     """Calculate market cap = close * shares outstanding using DataLoader caches."""
-    print("  📊 Loading shares outstanding...")
+    logger.info("  📊 Loading shares outstanding...")
 
     if data_loader is None:
-        print("  ⚠️  No data_loader provided")
+        logger.warning("  ⚠️  No data_loader provided")
         return pd.DataFrame()
 
     dates = close_df.index
@@ -49,14 +49,14 @@ def calculate_market_cap(close_df: pd.DataFrame, data_loader=None) -> pd.DataFra
                 market_cap = close_df.reindex(index=dates, columns=tickers).astype(float) * shares.astype(float)
                 non_na = int(market_cap.notna().sum().sum())
                 if non_na > 0:
-                    print(f"  ✅ Loaded shares panel for {shares.shape[1]} tickers")
+                    logger.info(f"  ✅ Loaded shares panel for {shares.shape[1]} tickers")
                     return market_cap
         except Exception as e:
-            print(f"  ⚠️  Failed consolidated shares panel path: {e}")
+            logger.warning(f"  ⚠️  Failed consolidated shares panel path: {e}")
 
     # Slow fallback: ticker-by-ticker shares series.
     if not hasattr(data_loader, "load_shares_outstanding"):
-        print("  ⚠️  data_loader has no shares API")
+        logger.warning("  ⚠️  data_loader has no shares API")
         return pd.DataFrame()
 
     market_cap = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
@@ -73,14 +73,14 @@ def calculate_market_cap(close_df: pd.DataFrame, data_loader=None) -> pd.DataFra
             market_cap[ticker] = close_df[ticker].reindex(dates) * shares
             success += 1
             if idx % 100 == 0:
-                print(f"  Shares fallback progress: {idx}/{len(tickers)} ({success} tickers)")
+                logger.info(f"  Shares fallback progress: {idx}/{len(tickers)} ({success} tickers)")
         except Exception:
             continue
 
     if int(market_cap.notna().sum().sum()) == 0:
         return pd.DataFrame()
 
-    print(f"  ✅ Loaded shares fallback for {success} tickers")
+    logger.info(f"  ✅ Loaded shares fallback for {success} tickers")
     return market_cap
 
 
@@ -100,27 +100,27 @@ def build_small_cap_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with small cap momentum scores (0-100)
     """
-    print("\n🔧 Building small cap momentum signals...")
-    print("  Size filter: Bottom 50% by market cap (small/mid caps)")
-    print("  Momentum: 6-month (40%) + 3-month (30%)")
-    print("  Weighting: Size (30%) + 6M Momentum (40%) + 3M Momentum (30%)")
+    logger.info("\n🔧 Building small cap momentum signals...")
+    logger.info("  Size filter: Bottom 50% by market cap (small/mid caps)")
+    logger.info("  Momentum: 6-month (40%) + 3-month (30%)")
+    logger.info("  Weighting: Size (30%) + 6M Momentum (40%) + 3M Momentum (30%)")
     
     # 1. Calculate market cap
-    print("  Calculating market cap...")
+    logger.info("  Calculating market cap...")
     market_cap_df = calculate_market_cap(close_df, data_loader)
     
     if market_cap_df.empty:
-        print("  ⚠️  No market cap data available")
-        print("  Returning zero scores for all stocks")
+        logger.warning("  ⚠️  No market cap data available")
+        logger.info("  Returning zero scores for all stocks")
         return pd.DataFrame(0.0, index=dates, columns=close_df.columns)
     
-    print(f"  ✅ Market cap: {market_cap_df.shape[0]} days × {market_cap_df.shape[1]} tickers")
+    logger.info(f"  ✅ Market cap: {market_cap_df.shape[0]} days × {market_cap_df.shape[1]} tickers")
     
     # Rank market cap (INVERTED - smaller is better)
     size_rank = (1 - market_cap_df.rank(axis=1, pct=True)) * 100
     
     # 2. Calculate momentum
-    print("  Calculating momentum...")
+    logger.info("  Calculating momentum...")
     
     # 6-month momentum
     momentum_6m = close_df.pct_change(126)
@@ -131,7 +131,7 @@ def build_small_cap_momentum_signals(
     momentum_3m_rank = momentum_3m.rank(axis=1, pct=True) * 100
     
     # 3. Combine
-    print("  Combining signals...")
+    logger.info("  Combining signals...")
     
     # Align columns
     common_tickers = size_rank.columns.intersection(momentum_6m_rank.columns).intersection(momentum_3m_rank.columns)
@@ -163,21 +163,21 @@ def build_small_cap_momentum_signals(
     # Summary
     valid_scores = result[result > 0].stack()
     if len(valid_scores) > 0:
-        print(f"  Valid scores - Mean: {valid_scores.mean():.1f}, Std: {valid_scores.std():.1f}")
-        print(f"  Valid scores - Min: {valid_scores.min():.1f}, Max: {valid_scores.max():.1f}")
+        logger.info(f"  Valid scores - Mean: {valid_scores.mean():.1f}, Std: {valid_scores.std():.1f}")
+        logger.info(f"  Valid scores - Min: {valid_scores.min():.1f}, Max: {valid_scores.max():.1f}")
         
         latest = result.iloc[-1]
         top_5 = latest.nlargest(5)
         if len(top_5[top_5 > 0]) > 0:
-            print(f"  Top 5 small cap momentum stocks: {', '.join(top_5[top_5 > 0].index.tolist())}")
+            logger.info(f"  Top 5 small cap momentum stocks: {', '.join(top_5[top_5 > 0].index.tolist())}")
             
             if not market_cap_df.empty:
                 latest_mcap = market_cap_df.iloc[-1]
                 for ticker in top_5[top_5 > 0].index:
                     if ticker in latest_mcap.index:
                         mcap_b = latest_mcap[ticker] / 1e9
-                        print(f"    {ticker}: {mcap_b:.2f}B TRY market cap")
+                        logger.info(f"    {ticker}: {mcap_b:.2f}B TRY market cap")
     
-    print(f"  ✅ Small cap momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Small cap momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
     
     return result

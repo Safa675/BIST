@@ -9,15 +9,12 @@ Based on Quantpedia strategy: Trend Following Effect in Stocks
 Signal: Closeness to all-time high + momentum strength
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # TREND FOLLOWING PARAMETERS
 # ============================================================================
@@ -160,9 +157,9 @@ def build_trend_following_signals(
     Returns:
         DataFrame (dates x tickers) with trend following scores
     """
-    print("\n🔧 Building trend following signals...")
-    print(f"  Max Lookback: {MAX_LOOKBACK} days")
-    print(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days")
+    logger.info("\n🔧 Building trend following signals...")
+    logger.info(f"  Max Lookback: {MAX_LOOKBACK} days")
+    logger.info(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days")
 
     # Calculate trend following scores
     trend_scores = calculate_trend_scores(close_df)
@@ -175,11 +172,11 @@ def build_trend_following_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
             # Count stocks at new highs
             n_at_high = (latest > 0.95 * 1.2).sum()  # Bonus threshold
-            print(f"  Stocks at/near highs: {n_at_high}")
+            logger.info(f"  Stocks at/near highs: {n_at_high}")
 
-    print(f"  ✅ Trend following signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Trend following signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

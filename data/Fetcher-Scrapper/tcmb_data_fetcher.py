@@ -9,12 +9,14 @@ EVDS Series Codes Reference:
 - Inflation expectations: TP.BEK.S01.A (12-month ahead)
 """
 
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
 import os
+logger = logging.getLogger(__name__)
 
 class TCMBDataFetcher:
     """
@@ -134,9 +136,9 @@ class TCMBDataFetcher:
         Returns:
             DataFrame with all indicators aligned by date
         """
-        print("="*70)
-        print("FETCHING TCMB LEADING INDICATORS")
-        print("="*70)
+        logger.info("="*70)
+        logger.info("FETCHING TCMB LEADING INDICATORS")
+        logger.info("="*70)
 
         if end_date is None:
             end_date = datetime.now().strftime('%Y-%m-%d')
@@ -149,8 +151,8 @@ class TCMBDataFetcher:
             self.fetch_cds_proxy(start_date, end_date)  # Computed proxy
             self.fetch_viop30_proxy(start_date, end_date)  # Computed proxy
         except Exception as e:
-            print(f"\nWarning: EVDS fetch failed: {e}")
-            print("Falling back to proxy calculations...")
+            logger.info(f"\nWarning: EVDS fetch failed: {e}")
+            logger.info("Falling back to proxy calculations...")
             self._calculate_all_proxies(start_date, end_date)
 
         # Combine all data
@@ -159,23 +161,23 @@ class TCMBDataFetcher:
         # Calculate derived indicators
         combined = self._calculate_derived_indicators(combined)
 
-        print(f"\n{'='*70}")
-        print(f"Fetched {len(combined.columns)} TCMB indicators")
+        logger.info(f"\n{'='*70}")
+        logger.info(f"Fetched {len(combined.columns)} TCMB indicators")
         if len(combined) > 0:
-            print(f"Date range: {combined.index[0]} to {combined.index[-1]}")
-            print(f"Observations: {len(combined)}")
-        print("="*70)
+            logger.info(f"Date range: {combined.index[0]} to {combined.index[-1]}")
+            logger.info(f"Observations: {len(combined)}")
+        logger.info("="*70)
 
         return combined
 
     def fetch_yield_curve(self, start_date, end_date, use_cache=True):
         """Fetch government bond yields for yield curve"""
-        print("\n[1/5] Fetching Yield Curve Data...")
+        logger.info("\n[1/5] Fetching Yield Curve Data...")
 
         cache_file = self.cache_dir / "yield_curve.csv"
 
         if use_cache and cache_file.exists():
-            print("  Loading from cache...")
+            logger.info("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if self._cache_covers_window(cached.index, start_date, end_date):
                 y2 = self._slice_series_to_window(cached.get('yield_2y'), start_date, end_date)
@@ -188,7 +190,7 @@ class TCMBDataFetcher:
                 if y10 is not None:
                     self.data['yield_10y'] = y10
                 if any(x is not None for x in (y2, y5, y10)):
-                    print(f"  Loaded {len(cached)} observations from cache")
+                    logger.info(f"  Loaded {len(cached)} observations from cache")
                     return
 
         try:
@@ -203,7 +205,7 @@ class TCMBDataFetcher:
                               ('yield_5y', self.SERIES_CODES['yield_5y']),
                               ('yield_10y', self.SERIES_CODES['yield_10y'])]:
                 try:
-                    print(f"  - Fetching {name} ({code})...")
+                    logger.info(f"  - Fetching {name} ({code})...")
                     data = client.get_data([code], startdate=start_fmt, enddate=end_fmt)
                     if data is not None and len(data) > 0:
                         data.columns = ['Date', name]
@@ -211,28 +213,28 @@ class TCMBDataFetcher:
                         data.set_index('Date', inplace=True)
                         data[name] = pd.to_numeric(data[name], errors='coerce') / 100  # Convert to decimal
                         self.data[name] = data[name]
-                        print(f"    Fetched {len(data)} observations")
+                        logger.info(f"    Fetched {len(data)} observations")
                 except Exception as e:
-                    print(f"    Warning: Could not fetch {name}: {e}")
+                    logger.info(f"    Warning: Could not fetch {name}: {e}")
 
             # Cache the data
             if self.data:
                 yield_df = pd.DataFrame(self.data)
                 yield_df.to_csv(cache_file)
-                print(f"  Cached to {cache_file}")
+                logger.info(f"  Cached to {cache_file}")
 
         except Exception as e:
-            print(f"  Error fetching yield curve: {e}")
+            logger.info(f"  Error fetching yield curve: {e}")
             self._calculate_yield_proxy(start_date, end_date)
 
     def fetch_policy_rates(self, start_date, end_date, use_cache=True):
         """Fetch TCMB policy rates"""
-        print("\n[2/5] Fetching Policy Rates...")
+        logger.info("\n[2/5] Fetching Policy Rates...")
 
         cache_file = self.cache_dir / "policy_rates.csv"
 
         if use_cache and cache_file.exists():
-            print("  Loading from cache...")
+            logger.info("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if self._cache_covers_window(cached.index, start_date, end_date):
                 policy = self._slice_series_to_window(cached.get('policy_rate'), start_date, end_date)
@@ -242,7 +244,7 @@ class TCMBDataFetcher:
                 if overnight is not None:
                     self.data['overnight_rate'] = overnight
                 if policy is not None or overnight is not None:
-                    print(f"  Loaded {len(cached)} observations from cache")
+                    logger.info(f"  Loaded {len(cached)} observations from cache")
                     return
 
         try:
@@ -253,7 +255,7 @@ class TCMBDataFetcher:
             for name, code in [('policy_rate', self.SERIES_CODES['policy_rate']),
                               ('overnight_rate', self.SERIES_CODES['overnight_rate'])]:
                 try:
-                    print(f"  - Fetching {name}...")
+                    logger.info(f"  - Fetching {name}...")
                     data = client.get_data([code], startdate=start_fmt, enddate=end_fmt)
                     if data is not None and len(data) > 0:
                         data.columns = ['Date', name]
@@ -261,9 +263,9 @@ class TCMBDataFetcher:
                         data.set_index('Date', inplace=True)
                         data[name] = pd.to_numeric(data[name], errors='coerce') / 100
                         self.data[name] = data[name]
-                        print(f"    Fetched {len(data)} observations")
+                        logger.info(f"    Fetched {len(data)} observations")
                 except Exception as e:
-                    print(f"    Warning: Could not fetch {name}: {e}")
+                    logger.info(f"    Warning: Could not fetch {name}: {e}")
 
             # Cache
             if 'policy_rate' in self.data:
@@ -272,16 +274,16 @@ class TCMBDataFetcher:
                 rates_df.to_csv(cache_file)
 
         except Exception as e:
-            print(f"  Error fetching policy rates: {e}")
+            logger.info(f"  Error fetching policy rates: {e}")
 
     def fetch_inflation_data(self, start_date, end_date, use_cache=True):
         """Fetch inflation and inflation expectations"""
-        print("\n[3/5] Fetching Inflation Data...")
+        logger.info("\n[3/5] Fetching Inflation Data...")
 
         cache_file = self.cache_dir / "inflation.csv"
 
         if use_cache and cache_file.exists():
-            print("  Loading from cache...")
+            logger.info("  Loading from cache...")
             cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if self._cache_covers_window(cached.index, start_date, end_date):
                 cpi = self._slice_series_to_window(cached.get('cpi_annual'), start_date, end_date)
@@ -291,7 +293,7 @@ class TCMBDataFetcher:
                 if infl_exp is not None:
                     self.data['inflation_exp'] = infl_exp
                 if cpi is not None or infl_exp is not None:
-                    print(f"  Loaded {len(cached)} observations from cache")
+                    logger.info(f"  Loaded {len(cached)} observations from cache")
                     return
 
         try:
@@ -302,7 +304,7 @@ class TCMBDataFetcher:
             for name, code in [('cpi_annual', self.SERIES_CODES['cpi_annual']),
                               ('inflation_exp', self.SERIES_CODES['inflation_exp'])]:
                 try:
-                    print(f"  - Fetching {name}...")
+                    logger.info(f"  - Fetching {name}...")
                     data = client.get_data([code], startdate=start_fmt, enddate=end_fmt)
                     if data is not None and len(data) > 0:
                         data.columns = ['Date', name]
@@ -310,9 +312,9 @@ class TCMBDataFetcher:
                         data.set_index('Date', inplace=True)
                         data[name] = pd.to_numeric(data[name], errors='coerce') / 100
                         self.data[name] = data[name]
-                        print(f"    Fetched {len(data)} observations")
+                        logger.info(f"    Fetched {len(data)} observations")
                 except Exception as e:
-                    print(f"    Warning: Could not fetch {name}: {e}")
+                    logger.info(f"    Warning: Could not fetch {name}: {e}")
 
             # Cache
             if 'cpi_annual' in self.data:
@@ -321,7 +323,7 @@ class TCMBDataFetcher:
                 infl_df.to_csv(cache_file)
 
         except Exception as e:
-            print(f"  Error fetching inflation data: {e}")
+            logger.info(f"  Error fetching inflation data: {e}")
 
     def fetch_cds_proxy(self, start_date, end_date):
         """
@@ -330,13 +332,13 @@ class TCMBDataFetcher:
 
         Proxy: Turkey 5Y yield - US 5Y yield (simplified credit spread)
         """
-        print("\n[4/5] Calculating CDS Proxy...")
+        logger.info("\n[4/5] Calculating CDS Proxy...")
 
         try:
             import yfinance as yf
 
             # Fetch US 5Y yield
-            print("  - Fetching US 5Y Treasury yield...")
+            logger.info("  - Fetching US 5Y Treasury yield...")
             us5y = yf.download('^FVX', start=start_date, end=end_date, progress=False)
 
             if not us5y.empty:
@@ -346,7 +348,7 @@ class TCMBDataFetcher:
                     us5y_close = us5y['Close']
 
                 self.data['us_5y_yield'] = us5y_close / 100  # Convert to decimal
-                print(f"    Fetched {len(us5y)} observations")
+                logger.info(f"    Fetched {len(us5y)} observations")
 
                 # If we have Turkey 5Y, calculate spread
                 if 'yield_5y' in self.data and self.data['yield_5y'] is not None:
@@ -356,16 +358,16 @@ class TCMBDataFetcher:
                     us_5y = (us5y_close / 100).reindex(common_idx)
 
                     self.data['cds_proxy'] = tr_5y - us_5y
-                    print(f"  CDS proxy calculated: {len(common_idx)} observations")
+                    logger.info(f"  CDS proxy calculated: {len(common_idx)} observations")
                 else:
                     # Use USD/TRY volatility as alternative proxy
-                    print("  Turkey yield not available, using USD/TRY vol as CDS proxy")
+                    logger.info("  Turkey yield not available, using USD/TRY vol as CDS proxy")
                     self._calculate_cds_from_fx(start_date, end_date)
             else:
-                print("  Warning: US yield data not available")
+                logger.info("  Warning: US yield data not available")
 
         except Exception as e:
-            print(f"  Error calculating CDS proxy: {e}")
+            logger.info(f"  Error calculating CDS proxy: {e}")
             self._calculate_cds_from_fx(start_date, end_date)
 
     def _calculate_cds_from_fx(self, start_date, end_date):
@@ -383,9 +385,9 @@ class TCMBDataFetcher:
                 # CDS proxy: 20-day realized vol of USD/TRY (higher vol = higher credit risk)
                 usdtry_vol = close.pct_change().rolling(20).std() * np.sqrt(252)
                 self.data['cds_proxy'] = usdtry_vol * 100  # Scale to basis points style
-                print(f"  CDS proxy (from FX vol): {len(usdtry_vol)} observations")
+                logger.info(f"  CDS proxy (from FX vol): {len(usdtry_vol)} observations")
         except Exception as e:
-            print(f"  Could not calculate CDS proxy: {e}")
+            logger.info(f"  Could not calculate CDS proxy: {e}")
 
     def fetch_viop30_proxy(self, start_date, end_date):
         """
@@ -395,13 +397,13 @@ class TCMBDataFetcher:
         1. Implied vol proxy from price dynamics
         2. VIX-based adjustment for Turkish market
         """
-        print("\n[5/5] Calculating VIOP30 Proxy...")
+        logger.info("\n[5/5] Calculating VIOP30 Proxy...")
 
         try:
             import yfinance as yf
 
             # Method 1: Scale VIX by Turkey/US volatility ratio
-            print("  - Fetching VIX and XU100 for proxy calculation...")
+            logger.info("  - Fetching VIX and XU100 for proxy calculation...")
 
             vix = yf.download('^VIX', start=start_date, end=end_date, progress=False)
             xu100 = yf.download('XU100.IS', start=start_date, end=end_date, progress=False)
@@ -429,18 +431,18 @@ class TCMBDataFetcher:
                 self.data['vix'] = vix_aligned
                 self.data['xu100_rvol'] = xu100_rvol
 
-                print(f"  VIOP30 proxy calculated: {len(viop30_proxy)} observations")
-                print(f"  Average VIOP30 proxy: {viop30_proxy.mean():.1f}")
-                print(f"  Average vol ratio (TR/US): {vol_ratio.mean():.2f}")
+                logger.info(f"  VIOP30 proxy calculated: {len(viop30_proxy)} observations")
+                logger.info(f"  Average VIOP30 proxy: {viop30_proxy.mean():.1f}")
+                logger.info(f"  Average vol ratio (TR/US): {vol_ratio.mean():.2f}")
             else:
-                print("  Warning: Could not fetch required data for VIOP30 proxy")
+                logger.info("  Warning: Could not fetch required data for VIOP30 proxy")
 
         except Exception as e:
-            print(f"  Error calculating VIOP30 proxy: {e}")
+            logger.info(f"  Error calculating VIOP30 proxy: {e}")
 
     def _calculate_yield_proxy(self, start_date, end_date):
         """Calculate yield curve proxy when EVDS unavailable"""
-        print("  Calculating yield proxy from USD/TRY...")
+        logger.info("  Calculating yield proxy from USD/TRY...")
         try:
             import yfinance as yf
 
@@ -453,13 +455,13 @@ class TCMBDataFetcher:
                 base_yield = 0.15  # 15% base
 
                 self.data['yield_proxy'] = base_yield + depreciation * 0.5
-                print(f"  Yield proxy calculated: {len(self.data['yield_proxy'])} observations")
+                logger.info(f"  Yield proxy calculated: {len(self.data['yield_proxy'])} observations")
         except Exception as e:
-            print(f"  Could not calculate yield proxy: {e}")
+            logger.info(f"  Could not calculate yield proxy: {e}")
 
     def _calculate_all_proxies(self, start_date, end_date):
         """Calculate all proxies when EVDS is unavailable"""
-        print("\nCalculating all proxies (EVDS unavailable)...")
+        logger.info("\nCalculating all proxies (EVDS unavailable)...")
         self._calculate_yield_proxy(start_date, end_date)
         self._calculate_cds_from_fx(start_date, end_date)
         self.fetch_viop30_proxy(start_date, end_date)
@@ -488,40 +490,40 @@ class TCMBDataFetcher:
         # Yield Curve Slope (10Y - 2Y)
         if 'yield_10y' in df.columns and 'yield_2y' in df.columns:
             df['yield_curve_slope'] = df['yield_10y'] - df['yield_2y']
-            print("  + Calculated yield_curve_slope")
+            logger.info("  + Calculated yield_curve_slope")
 
         # Real Interest Rate (policy rate - inflation)
         if 'policy_rate' in df.columns and 'cpi_annual' in df.columns:
             df['real_rate'] = df['policy_rate'] - df['cpi_annual']
-            print("  + Calculated real_rate")
+            logger.info("  + Calculated real_rate")
 
         # Inflation Surprise (actual - expected)
         if 'cpi_annual' in df.columns and 'inflation_exp' in df.columns:
             df['inflation_surprise'] = df['cpi_annual'] - df['inflation_exp'].shift(12)  # 12-month lag
-            print("  + Calculated inflation_surprise")
+            logger.info("  + Calculated inflation_surprise")
 
         # IV-RV Spread (implied - realized volatility)
         if 'viop30_proxy' in df.columns and 'xu100_rvol' in df.columns:
             df['iv_rv_spread'] = df['viop30_proxy'] - df['xu100_rvol']
-            print("  + Calculated iv_rv_spread")
+            logger.info("  + Calculated iv_rv_spread")
 
         # CDS momentum
         if 'cds_proxy' in df.columns:
             df['cds_change_20d'] = df['cds_proxy'].diff(20)
             df['cds_ma_ratio'] = df['cds_proxy'] / df['cds_proxy'].rolling(60).mean()
-            print("  + Calculated CDS momentum indicators")
+            logger.info("  + Calculated CDS momentum indicators")
 
         # VIOP30 momentum
         if 'viop30_proxy' in df.columns:
             df['viop30_change_5d'] = df['viop30_proxy'].pct_change(5)
             df['viop30_change_20d'] = df['viop30_proxy'].pct_change(20)
             df['viop30_ma_ratio'] = df['viop30_proxy'] / df['viop30_proxy'].rolling(60).mean()
-            print("  + Calculated VIOP30 momentum indicators")
+            logger.info("  + Calculated VIOP30 momentum indicators")
 
         # Policy rate momentum
         if 'policy_rate' in df.columns:
             df['policy_rate_change'] = df['policy_rate'].diff(20)
-            print("  + Calculated policy rate change")
+            logger.info("  + Calculated policy rate change")
 
         return df
 
@@ -545,9 +547,9 @@ class TCMBDataFetcher:
 
 
 if __name__ == "__main__":
-    print("="*70)
-    print("TCMB DATA FETCHER TEST")
-    print("="*70)
+    logger.info("="*70)
+    logger.info("TCMB DATA FETCHER TEST")
+    logger.info("="*70)
 
     # Initialize fetcher (will use proxies if no API key)
     fetcher = TCMBDataFetcher()
@@ -556,31 +558,31 @@ if __name__ == "__main__":
     data = fetcher.fetch_all(start_date='2020-01-01')
 
     # Print summary
-    print(fetcher.get_data_summary())
+    logger.info(fetcher.get_data_summary())
 
     # Show sample data
-    print("\n" + "="*70)
-    print("SAMPLE DATA (Last 10 rows)")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("SAMPLE DATA (Last 10 rows)")
+    logger.info("="*70)
     if not data.empty:
-        print(data.tail(10))
+        logger.info(data.tail(10))
 
     # Show key statistics
-    print("\n" + "="*70)
-    print("KEY STATISTICS")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("KEY STATISTICS")
+    logger.info("="*70)
     if not data.empty:
         key_cols = ['viop30_proxy', 'cds_proxy', 'yield_curve_slope', 'real_rate']
         available_cols = [c for c in key_cols if c in data.columns]
         if available_cols:
-            print(data[available_cols].describe())
+            logger.info(data[available_cols].describe())
 
-    print("\n" + "="*70)
-    print("USAGE")
-    print("="*70)
-    print("To use actual TCMB data:")
-    print("1. Get API key from: https://evds2.tcmb.gov.tr/")
-    print("2. Set environment variable: export TCMB_EVDS_API_KEY='your_key'")
-    print("3. Or pass directly: TCMBDataFetcher(api_key='your_key')")
-    print("\nWithout API key, proxy calculations are used.")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("USAGE")
+    logger.info("="*70)
+    logger.info("To use actual TCMB data:")
+    logger.info("1. Get API key from: https://evds2.tcmb.gov.tr/")
+    logger.info("2. Set environment variable: export TCMB_EVDS_API_KEY='your_key'")
+    logger.info("3. Or pass directly: TCMBDataFetcher(api_key='your_key')")
+    logger.info("\nWithout API key, proxy calculations are used.")
+    logger.info("="*70)

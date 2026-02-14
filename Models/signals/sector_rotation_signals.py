@@ -10,15 +10,14 @@ Based on Quantpedia strategy: Sector Momentum Rotational System
 Signal: Sector momentum score assigned to each stock in that sector
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-from typing import Optional, Dict
-import sys
+from typing import Dict, Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import numpy as np
+import pandas as pd
 
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # SECTOR ROTATION PARAMETERS
 # ============================================================================
@@ -58,7 +57,7 @@ def _load_sector_classification() -> pd.DataFrame:
         _sector_cache = df
         return df
 
-    print("  ⚠️  No borsapy sector classification found, using empty mapping")
+    logger.warning("  ⚠️  No borsapy sector classification found, using empty mapping")
     _sector_cache = pd.DataFrame(columns=['ticker', 'sector', 'industry'])
     return _sector_cache
 
@@ -199,9 +198,9 @@ def build_sector_rotation_signals(
     Returns:
         DataFrame (dates x tickers) with sector rotation scores
     """
-    print("\n🔧 Building sector rotation signals...")
-    print(f"  Sector Momentum Lookback: {SECTOR_MOMENTUM_LOOKBACK} days")
-    print(f"  Top Sectors: {TOP_SECTORS}")
+    logger.info("\n🔧 Building sector rotation signals...")
+    logger.info(f"  Sector Momentum Lookback: {SECTOR_MOMENTUM_LOOKBACK} days")
+    logger.info(f"  Top Sectors: {TOP_SECTORS}")
 
     # Build sector mapping and count coverage
     sector_mapping = build_sector_mapping(close_df.columns.tolist())
@@ -209,9 +208,9 @@ def build_sector_rotation_signals(
     for ticker, sector in sector_mapping.items():
         sector_counts[sector] = sector_counts.get(sector, 0) + 1
 
-    print(f"  Sector coverage:")
+    logger.info("  Sector coverage:")
     for sector, count in sorted(sector_counts.items(), key=lambda x: -x[1]):
-        print(f"    {sector}: {count} stocks")
+        logger.info(f"    {sector}: {count} stocks")
 
     # Calculate sector rotation scores
     sector_scores = calculate_sector_rotation_scores(close_df)
@@ -224,8 +223,8 @@ def build_sector_rotation_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
 
-    print(f"  ✅ Sector rotation signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Sector rotation signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

@@ -9,15 +9,12 @@ Based on Quantpedia strategy: Consistent Momentum Strategy
 Signal: Stocks must be in top performers for both t-7 to t-1 AND t-6 to t periods
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # CONSISTENT MOMENTUM PARAMETERS
 # ============================================================================
@@ -138,10 +135,10 @@ def build_consistent_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with consistent momentum scores
     """
-    print("\n🔧 Building consistent momentum signals...")
-    print(f"  Period 1: t-{PERIOD_1_START} to t-{PERIOD_1_END} (~7mo to ~1mo ago)")
-    print(f"  Period 2: t-{PERIOD_2_START} to t-{PERIOD_2_END} (~6mo to current)")
-    print(f"  Consistency threshold: Top {QUANTILE_THRESHOLD*100:.0f}% in both periods")
+    logger.info("\n🔧 Building consistent momentum signals...")
+    logger.info(f"  Period 1: t-{PERIOD_1_START} to t-{PERIOD_1_END} (~7mo to ~1mo ago)")
+    logger.info(f"  Period 2: t-{PERIOD_2_START} to t-{PERIOD_2_END} (~6mo to current)")
+    logger.info(f"  Consistency threshold: Top {QUANTILE_THRESHOLD*100:.0f}% in both periods")
 
     # Calculate consistent momentum scores
     momentum_scores = calculate_consistent_momentum_scores(close_df)
@@ -154,11 +151,11 @@ def build_consistent_momentum_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
             # Count consistent winners
             n_consistent = (latest > 0.5).sum()  # Above 0.5 = likely consistent winners
-            print(f"  Consistent winners (latest): {n_consistent}")
+            logger.info(f"  Consistent winners (latest): {n_consistent}")
 
-    print(f"  ✅ Consistent momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Consistent momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

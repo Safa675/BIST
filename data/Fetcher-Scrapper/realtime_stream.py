@@ -25,11 +25,13 @@ Usage:
     snapshot = service.get_portfolio_snapshot(holdings)
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, Callable
 import json
 import threading
 import time
+logger = logging.getLogger(__name__)
 
 try:
     import borsapy as bp
@@ -454,7 +456,7 @@ class RealtimeWatcher:
         self._running = True
         self._thread = threading.Thread(target=self._watch_loop, daemon=True)
         self._thread.start()
-        print(f"RealtimeWatcher started: {len(self.symbols)} symbols, {self.interval}s interval")
+        logger.info(f"RealtimeWatcher started: {len(self.symbols)} symbols, {self.interval}s interval")
 
     def stop(self):
         """Stop the background watcher."""
@@ -462,7 +464,7 @@ class RealtimeWatcher:
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
-        print("RealtimeWatcher stopped")
+        logger.info("RealtimeWatcher stopped")
 
     def _watch_loop(self):
         """Background watch loop."""
@@ -487,7 +489,7 @@ class RealtimeWatcher:
                     self.on_update(changed)
 
             except Exception as e:
-                print(f"RealtimeWatcher error: {e}")
+                logger.info(f"RealtimeWatcher error: {e}")
 
             # Wait for next interval
             time.sleep(self.interval)

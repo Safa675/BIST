@@ -6,22 +6,25 @@ Calculates profitability scores based on:
 - Gross Profit / Total Assets (50%)
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
+
+import numpy as np
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
     validate_signal_panel_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -117,8 +120,8 @@ def build_profitability_signals(
     Returns:
         DataFrame (dates x tickers) with profitability scores
     """
-    print("\n🔧 Building profitability signals...")
-    print(
+    logger.info("\n🔧 Building profitability signals...")
+    logger.info(
         f"  Component weights: operating_income={operating_income_weight:.2f}, "
         f"gross_profit={gross_profit_weight:.2f}"
     )
@@ -145,15 +148,20 @@ def build_profitability_signals(
                 panel[ticker] = lagged
                 count += 1
                 if count % 50 == 0:
-                    print(f"  Processed {count} tickers...")
+                    logger.info(f"  Processed {count} tickers...")
     
     result = pd.DataFrame(panel, index=dates)
+
+    # Apply staleness-based down-weighting (Part D)
+    result = apply_staleness_weighting(result)
+
     result = validate_signal_panel_schema(
         result,
         dates=dates,
         tickers=pd.Index(sorted(fundamentals.keys())),
         signal_name="profitability",
         context="final score panel",
+        dtype=np.float32,
     )
-    print(f"  ✅ Profitability signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Profitability signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

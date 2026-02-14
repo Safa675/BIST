@@ -13,20 +13,20 @@ Uses cross-sectional percentile ranks to avoid overfitting to specific
 threshold values. This approach adapts to market conditions automatically.
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
+from Models.common.utils import (
     SignalDataError,
     assert_has_cross_section,
     assert_panel_not_constant,
     raise_signal_data_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -55,7 +55,7 @@ def calculate_annualized_volatility(
         DataFrame of annualized volatility (Date x Ticker)
     """
     # Calculate daily returns
-    daily_returns = close_df.pct_change(fill_method=None)
+    daily_returns = close_df.pct_change()
     
     # Calculate rolling standard deviation
     rolling_std = daily_returns.rolling(
@@ -137,8 +137,8 @@ def build_dividend_rotation_signals(
     Returns:
         DataFrame (dates x tickers) with dividend rotation scores (0-100)
     """
-    print("\n Building dividend rotation signals (cross-sectional ranking)...")
-    print(f"  Volatility lookback: {VOLATILITY_LOOKBACK} days")
+    logger.info("\n Building dividend rotation signals (cross-sectional ranking)...")
+    logger.info(f"  Volatility lookback: {VOLATILITY_LOOKBACK} days")
 
     if data_loader is None:
         raise_signal_data_error(
@@ -170,7 +170,7 @@ def build_dividend_rotation_signals(
                 f"missing required metrics: {missing_metrics}; available: {available_metrics}",
             )
 
-        print(f"  Loaded metrics for {len(metrics_df.index.get_level_values(0).unique())} tickers")
+        logger.info(f"  Loaded metrics for {len(metrics_df.index.get_level_values(0).unique())} tickers")
 
         # Build raw metric panels (dates x tickers)
         payout_panel = pd.DataFrame(index=dates, columns=close_df.columns, dtype=float)
@@ -276,14 +276,14 @@ def build_dividend_rotation_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.1f}, Std: {latest.std():.1f}")
-            print(f"  Latest scores - Min: {latest.min():.1f}, Max: {latest.max():.1f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.1f}, Std: {latest.std():.1f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.1f}, Max: {latest.max():.1f}")
 
             # Show top dividend stocks
             top_5 = latest.nlargest(5)
             if len(top_5) > 0:
-                print(f"  Top 5 dividend stocks: {', '.join(top_5.index.tolist())}")
+                logger.info(f"  Top 5 dividend stocks: {', '.join(top_5.index.tolist())}")
 
-    print(f"  Dividend rotation signals: {result.shape[0]} days x {result.shape[1]} tickers")
+    logger.info(f"  Dividend rotation signals: {result.shape[0]} days x {result.shape[1]} tickers")
 
     return result

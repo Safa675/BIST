@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import argparse
 import json
 import re
@@ -29,6 +30,7 @@ from typing import Iterable
 
 import pandas as pd
 import requests
+logger = logging.getLogger(__name__)
 
 
 POPULAR_FUNDS_URL = "https://www.fongetiri.com/fon/populer-fonlar"
@@ -186,13 +188,13 @@ def main() -> None:
     session = requests.Session()
     session.headers.update(DEFAULT_HEADERS)
 
-    print("Loading full fund universe...")
+    logger.info("Loading full fund universe...")
     universe = fetch_fund_universe(session=session, timeout=args.timeout)
-    print(f"  Universe size: {len(universe)} funds")
+    logger.info(f"  Universe size: {len(universe)} funds")
 
     selected = universe[universe["fund_name"].map(lambda n: _is_gold_fund(n, args.mode))]
     selected = selected.sort_values("code").reset_index(drop=True)
-    print(f"  Gold filter ({args.mode}): {len(selected)} funds")
+    logger.info(f"  Gold filter ({args.mode}): {len(selected)} funds")
     if selected.empty:
         raise RuntimeError("No gold funds matched filter.")
 
@@ -212,10 +214,10 @@ def main() -> None:
             chart["code"] = code
             chart["fund_name"] = name
             long_frames.append(chart)
-            print(f"[{idx + 1:>3}/{len(selected)}] OK   {code} rows={len(chart)}")
+            logger.info(f"[{idx + 1:>3}/{len(selected)}] OK   {code} rows={len(chart)}")
         except Exception as exc:  # noqa: BLE001
             failures.append({"code": code, "fund_name": name, "error": str(exc)})
-            print(f"[{idx + 1:>3}/{len(selected)}] FAIL {code}: {exc}")
+            logger.info(f"[{idx + 1:>3}/{len(selected)}] FAIL {code}: {exc}")
         if args.sleep_ms > 0:
             time.sleep(args.sleep_ms / 1000.0)
 
@@ -260,17 +262,17 @@ def main() -> None:
     }
     report_out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print("\nSaved outputs:")
-    print(f"  {selected_out}")
-    print(f"  {long_csv_out}")
-    print(f"  {long_parquet_out}")
-    print(f"  {wide_csv_out}")
-    print(f"  {report_out}")
+    logger.info("\nSaved outputs:")
+    logger.info(f"  {selected_out}")
+    logger.info(f"  {long_csv_out}")
+    logger.info(f"  {long_parquet_out}")
+    logger.info(f"  {wide_csv_out}")
+    logger.info(f"  {report_out}")
 
     if failures:
-        print(f"\nWarning: {len(failures)} funds failed. See {report_out}.")
+        logger.info(f"\nWarning: {len(failures)} funds failed. See {report_out}.")
     else:
-        print("\nAll selected gold funds downloaded successfully.")
+        logger.info("\nAll selected gold funds downloaded successfully.")
 
 
 if __name__ == "__main__":

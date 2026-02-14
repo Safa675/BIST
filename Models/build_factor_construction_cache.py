@@ -18,19 +18,19 @@ Usage:
 """
 
 import argparse
+import logging
 import time
 from pathlib import Path
-import sys
 
 import pandas as pd
 
 # Add Models/ to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from common.data_loader import DataLoader
-from signals.five_factor_rotation_signals import (
+from Models.common.data_loader import DataLoader
+from Models.signals.five_factor_rotation_signals import (
     build_five_factor_rotation_axis_cache,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,13 +51,13 @@ def main() -> None:
     data_dir = project_root / "data"
     regime_model_dir_candidates = [
         project_root / "Simple Regime Filter" / "outputs",
-        project_root / "Regime Filter" / "outputs",
+        project_root / "regime_filter" / "outputs",
     ]
     regime_model_dir = next((p for p in regime_model_dir_candidates if p.exists()), regime_model_dir_candidates[0])
 
-    print("=" * 70)
-    print("BUILDING FIVE-FACTOR AXIS CONSTRUCTION CACHE")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("BUILDING FIVE-FACTOR AXIS CONSTRUCTION CACHE")
+    logger.info("=" * 70)
 
     loader = DataLoader(data_dir=data_dir, regime_model_dir=regime_model_dir)
 
@@ -78,8 +78,8 @@ def main() -> None:
     close_slice = close_df.reindex(dates)
     volume_slice = volume_df.reindex(dates)
 
-    print(f"Date range: {dates.min().date()} -> {dates.max().date()} ({len(dates)} days)")
-    print(f"Tickers: {close_slice.shape[1]}")
+    logger.info(f"Date range: {dates.min().date()} -> {dates.max().date()} ({len(dates)} days)")
+    logger.info(f"Tickers: {close_slice.shape[1]}")
 
     cache_path = build_five_factor_rotation_axis_cache(
         close_df=close_slice,
@@ -92,8 +92,8 @@ def main() -> None:
     )
 
     elapsed = time.time() - started
-    print(f"\n✅ Axis cache ready: {cache_path}")
-    print(f"⏱️  Total runtime: {elapsed:.1f}s ({elapsed/60.0:.1f}m)")
+    logger.info(f"\n✅ Axis cache ready: {cache_path}")
+    logger.info(f"⏱️  Total runtime: {elapsed:.1f}s ({elapsed/60.0:.1f}m)")
 
 
 if __name__ == "__main__":

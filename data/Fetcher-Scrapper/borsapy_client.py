@@ -5,12 +5,26 @@ Wraps borsapy with caching, error handling, and integration
 with the existing data pipeline.
 """
 
-from pathlib import Path
-from datetime import datetime
-from typing import Any, Optional
+import ast
+import json
+import logging
+import random
+import re
+import time
+import uuid
 import warnings
+from datetime import datetime
+from enum import Enum
+from functools import wraps
+from pathlib import Path
+from ssl import SSLError
+from threading import Lock
+from typing import Any, Callable, Optional
 
+import httpx
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 try:
     import borsapy as bp
@@ -20,6 +34,143 @@ except ImportError:
     bp = None
 
 warnings.filterwarnings("ignore")
+
+DEFAULT_MCP_ENDPOINT = "https://borsamcp.fastmcp.app/mcp"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "borsapy_config.yaml"
+
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class CircuitBreakerError(RuntimeError):
+    """Raised when the circuit breaker blocks a call."""
+
+
+class CircuitBreaker:
+    """Simple thread-safe circuit breaker."""
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_threshold = int(failure_threshold)
+        self.recovery_timeout = int(recovery_timeout)
+
+        self.failure_count = 0
+        self.last_failure_time: float | None = None
+        self.state = CircuitState.CLOSED
+        self.lock = Lock()
+
+    def call(self, func: Callable[..., Any], *args, **kwargs):
+        with self.lock:
+            if self.state == CircuitState.OPEN:
+                elapsed = time.time() - (self.last_failure_time or 0)
+                if elapsed > self.recovery_timeout:
+                    self.state = CircuitState.HALF_OPEN
+                else:
+                    raise CircuitBreakerError("Circuit breaker is OPEN")
+
+        try:
+            result = func(*args, **kwargs)
+            self.on_success()
+            return result
+        except Exception:
+            self.on_failure()
+            raise
+
+    def on_success(self):
+        with self.lock:
+            self.failure_count = 0
+            self.state = CircuitState.CLOSED
+            self.last_failure_time = None
+
+    def on_failure(self):
+        with self.lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+
+            if self.failure_count >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    backoff_factor: float = 2.0,
+    jitter: bool = True,
+):
+    """Retry decorator with exponential backoff and optional jitter."""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = int(max_retries)
+            delay = float(base_delay)
+            cap = float(max_delay)
+            factor = float(backoff_factor)
+            use_jitter = bool(jitter)
+
+            if args:
+                policy = getattr(args[0], "_retry_policy", None)
+                if isinstance(policy, dict):
+                    retries = int(policy.get("max_retries", retries))
+                    delay = float(policy.get("base_delay", delay))
+                    cap = float(policy.get("max_delay", cap))
+                    factor = float(policy.get("backoff_factor", factor))
+                    use_jitter = bool(policy.get("jitter", use_jitter))
+
+            current_delay = max(0.0, delay)
+            last_exception = None
+
+            for attempt in range(retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as exc:
+                    last_exception = exc
+                    if attempt == retries:
+                        break
+
+                    sleep_time = current_delay
+                    if use_jitter and current_delay > 0:
+                        sleep_time = random.uniform(0, current_delay)
+
+                    logger.warning(
+                        f"Attempt {attempt + 1} failed: {exc}. Retrying in {sleep_time:.2f}s..."
+                    )
+                    time.sleep(max(0.0, sleep_time))
+                    current_delay = min(max(0.0, current_delay * factor), cap)
+
+            raise last_exception
+
+        return wrapper
+
+    return decorator
+
+
+def configure_borsapy_logging(
+    log_file: str | Path = "borsapy_integration.log",
+    level: int = logging.INFO,
+) -> None:
+    """
+    Configure default logging for borsapy integrations.
+
+    This only configures the root logger if no handlers are present.
+    """
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        return
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(),
+        ],
+    )
 
 
 class BorsapyClient:
@@ -35,17 +186,59 @@ class BorsapyClient:
     - Real-time quotes (15-min delayed by default)
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        cache_dir: Optional[Path] = None,
+        use_mcp_fallback: bool = True,
+        mcp_endpoint: str | None = None,
+        timeout: float | None = None,
+        config_path: Path | str | None = None,
+    ):
         """
         Initialize the borsapy client.
 
         Args:
             cache_dir: Directory for caching data. Defaults to data/borsapy_cache
+            use_mcp_fallback: Enable Borsa-MCP fallback for SSL/data issues.
+            mcp_endpoint: Optional MCP endpoint override.
+            timeout: Optional MCP HTTP timeout override.
+            config_path: Optional path to borsapy YAML config.
         """
         if not BORSAPY_AVAILABLE:
             raise ImportError(
                 "borsapy is not installed. Install with: pip install borsapy"
             )
+
+        config = self._load_config(config_path)
+        borsapy_config = config.get("borsapy", {}) if isinstance(config, dict) else {}
+
+        self.use_mcp_fallback = bool(
+            borsapy_config.get("use_mcp_fallback", use_mcp_fallback)
+        )
+        self._mcp_endpoint = str(borsapy_config.get("mcp_endpoint", mcp_endpoint or DEFAULT_MCP_ENDPOINT))
+        timeout_seconds = float(borsapy_config.get("timeout", timeout or 15.0))
+        self._session = httpx.Client(
+            timeout=timeout_seconds,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+        cb_config = borsapy_config.get("circuit_breaker", {}) if isinstance(borsapy_config, dict) else {}
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=int(cb_config.get("failure_threshold", 3)),
+            recovery_timeout=int(cb_config.get("recovery_timeout", 30)),
+        )
+
+        retry_policy = borsapy_config.get("retry_policy", {}) if isinstance(borsapy_config, dict) else {}
+        self._retry_policy: dict[str, Any] = {
+            "max_retries": int(retry_policy.get("max_retries", 3)),
+            "base_delay": float(retry_policy.get("base_delay", 1)),
+            "max_delay": float(retry_policy.get("max_delay", 10)),
+            "backoff_factor": float(retry_policy.get("backoff_factor", 2)),
+            "jitter": bool(retry_policy.get("jitter", True)),
+        }
 
         self.cache_dir = cache_dir or Path(__file__).parent.parent / "borsapy_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +264,26 @@ class BorsapyClient:
         if days_ahead <= 14:
             return "2w"
         return "1mo"
+
+    @staticmethod
+    def _load_config(config_path: Path | str | None) -> dict[str, Any]:
+        path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+        if not path.exists():
+            return {}
+
+        try:
+            import yaml
+        except ImportError:
+            logger.warning("PyYAML is unavailable; skipping borsapy config load.")
+            return {}
+
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                config = yaml.safe_load(handle) or {}
+            return config if isinstance(config, dict) else {}
+        except Exception as exc:
+            logger.warning(f"Could not load borsapy config from {path}: {exc}")
+            return {}
 
     # -------------------------------------------------------------------------
     # Ticker Access
@@ -125,7 +338,7 @@ class BorsapyClient:
                 df["Ticker"] = symbol
             return df
         except Exception as e:
-            print(f"  Warning: Failed to fetch history for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to fetch history for {symbol}: {e}")
             return pd.DataFrame()
 
     def batch_download(
@@ -165,7 +378,7 @@ class BorsapyClient:
                 progress=progress,
             )
         except Exception as e:
-            print(f"  Warning: Batch download failed: {e}")
+            logger.info(f"  Warning: Batch download failed: {e}")
             return pd.DataFrame()
 
     def to_long_ohlcv(
@@ -314,7 +527,7 @@ class BorsapyClient:
         try:
             return dict(ticker.fast_info) if ticker.fast_info else {}
         except Exception as e:
-            print(f"  Warning: Failed to get fast_info for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to get fast_info for {symbol}: {e}")
             return {}
 
     # -------------------------------------------------------------------------
@@ -323,33 +536,89 @@ class BorsapyClient:
 
     def get_financials(self, symbol: str) -> dict[str, pd.DataFrame]:
         """
-        Get all financial statements for a ticker.
-
-        Args:
-            symbol: Stock symbol
+        Backward-compatible alias for financial statements.
 
         Returns:
-            Dict with balance_sheet, income_stmt, cashflow DataFrames
+            Dict with balance_sheet, income_stmt, cashflow and cash_flow DataFrames.
         """
-        ticker = self.get_ticker(symbol)
-        result = {}
+        statements = self.get_financial_statements(symbol)
+        cash_flow = statements.get("cash_flow", pd.DataFrame())
+        return {
+            "balance_sheet": statements.get("balance_sheet", pd.DataFrame()),
+            "income_stmt": statements.get("income_stmt", pd.DataFrame()),
+            "cashflow": cash_flow,
+            "cash_flow": cash_flow,
+        }
+
+    def get_financial_statements(self, symbol: str) -> dict[str, pd.DataFrame]:
+        """
+        Get financial statements with MCP fallback.
+
+        Args:
+            symbol: Stock symbol (e.g., THYAO)
+
+        Returns:
+            Dictionary containing balance_sheet, income_stmt, cash_flow.
+        """
+        symbol = self._normalize_symbol(symbol)
 
         try:
-            result["balance_sheet"] = ticker.balance_sheet
-        except Exception:
-            result["balance_sheet"] = pd.DataFrame()
+            ticker = self.get_ticker(symbol)
+            statements = {
+                "balance_sheet": self._coerce_dataframe(getattr(ticker, "balance_sheet", None)),
+                "income_stmt": self._coerce_dataframe(getattr(ticker, "income_stmt", None)),
+                "cash_flow": self._coerce_dataframe(
+                    getattr(ticker, "cash_flow", None) or getattr(ticker, "cashflow", None)
+                ),
+            }
 
+            if all(frame.empty for frame in statements.values()):
+                logger.warning(
+                    f"Empty financial statements from borsapy for {symbol}, trying MCP fallback."
+                )
+                if self.use_mcp_fallback:
+                    return self._get_financials_via_mcp(symbol)
+            return statements
+        except SSLError as exc:
+            logger.warning(f"SSL error in borsapy financial statements for {symbol}: {exc}")
+            if self.use_mcp_fallback:
+                return self._get_financials_via_mcp(symbol)
+            raise
+        except Exception as exc:
+            logger.error(f"Unexpected error in borsapy financial statements for {symbol}: {exc}")
+            if self.use_mcp_fallback:
+                return self._get_financials_via_mcp(symbol)
+            raise
+
+    def get_financial_ratios(self, symbol: str) -> pd.DataFrame:
+        """
+        Get financial ratios with MCP fallback.
+
+        Args:
+            symbol: Stock symbol (e.g., THYAO)
+
+        Returns:
+            DataFrame with financial ratios.
+        """
+        symbol = self._normalize_symbol(symbol)
         try:
-            result["income_stmt"] = ticker.income_stmt
-        except Exception:
-            result["income_stmt"] = pd.DataFrame()
-
-        try:
-            result["cashflow"] = ticker.cashflow
-        except Exception:
-            result["cashflow"] = pd.DataFrame()
-
-        return result
+            ticker = self.get_ticker(symbol)
+            ratios = self._coerce_dataframe(getattr(ticker, "financial_ratios", None))
+            if ratios.empty:
+                logger.warning(f"Empty financial ratios from borsapy for {symbol}, trying MCP fallback.")
+                if self.use_mcp_fallback:
+                    return self._get_ratios_via_mcp(symbol)
+            return ratios
+        except SSLError as exc:
+            logger.warning(f"SSL error in borsapy financial ratios for {symbol}: {exc}")
+            if self.use_mcp_fallback:
+                return self._get_ratios_via_mcp(symbol)
+            raise
+        except Exception as exc:
+            logger.error(f"Unexpected error in borsapy financial ratios for {symbol}: {exc}")
+            if self.use_mcp_fallback:
+                return self._get_ratios_via_mcp(symbol)
+            raise
 
     def get_dividends(self, symbol: str) -> pd.DataFrame:
         """Get dividend history for a ticker."""
@@ -430,7 +699,7 @@ class BorsapyClient:
                 idx = self.get_index(index)
                 self._index_components_cache[index] = list(idx.component_symbols or [])
             except Exception as e:
-                print(f"  Warning: Failed to get components for {index}: {e}")
+                logger.info(f"  Warning: Failed to get components for {index}: {e}")
                 self._index_components_cache[index] = []
 
         return self._index_components_cache[index]
@@ -475,7 +744,7 @@ class BorsapyClient:
             else:
                 return ticker.history_with_indicators(period=period, interval=interval)
         except Exception as e:
-            print(f"  Warning: Failed to get indicators for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to get indicators for {symbol}: {e}")
             return self.get_history(symbol, period=period, interval=interval)
 
     def calculate_rsi(
@@ -520,7 +789,12 @@ class BorsapyClient:
     # Stock Screening
     # -------------------------------------------------------------------------
 
-    def screen_stocks(self, **filters) -> pd.DataFrame:
+    def screen_stocks(
+        self,
+        template: str | None = None,
+        filters: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> pd.DataFrame:
         """
         Run stock screener with fundamental/technical filters.
 
@@ -532,11 +806,30 @@ class BorsapyClient:
         Returns:
             DataFrame with matching stocks
         """
+        merged_filters = dict(filters or {})
+        merged_filters.update(kwargs)
+
         try:
-            return bp.screen_stocks(**filters)
-        except Exception as e:
-            print(f"  Warning: Screening failed: {e}")
-            return pd.DataFrame()
+            if template:
+                result = bp.screen_stocks(template=template, **merged_filters)
+            else:
+                result = bp.screen_stocks(**merged_filters)
+            result_df = self._coerce_dataframe(result)
+            if not result_df.empty or not self.use_mcp_fallback:
+                return result_df
+
+            logger.warning("Empty screening result from borsapy; trying MCP fallback.")
+            return self._screen_via_mcp(template=template, filters=merged_filters)
+        except SSLError as exc:
+            logger.warning(f"SSL error in borsapy.screen_stocks: {exc}")
+            if self.use_mcp_fallback:
+                return self._screen_via_mcp(template=template, filters=merged_filters)
+            raise
+        except Exception as exc:
+            logger.error(f"Unexpected error in borsapy.screen_stocks: {exc}")
+            if self.use_mcp_fallback:
+                return self._screen_via_mcp(template=template, filters=merged_filters)
+            raise
 
     def technical_scan(
         self,
@@ -567,8 +860,272 @@ class BorsapyClient:
         try:
             return bp.scan(universe=universe, condition=condition, interval=timeframe, limit=limit)
         except Exception as e:
-            print(f"  Warning: Technical scan failed: {e}")
+            logger.info(f"  Warning: Technical scan failed: {e}")
             return pd.DataFrame()
+
+    # -------------------------------------------------------------------------
+    # MCP Fallback Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _coerce_dataframe(value: Any) -> pd.DataFrame:
+        """Normalize arbitrary payloads into a DataFrame."""
+        if isinstance(value, pd.DataFrame):
+            return value.copy()
+        if isinstance(value, pd.Series):
+            return value.to_frame().T
+        if isinstance(value, list):
+            if not value:
+                return pd.DataFrame()
+            if all(isinstance(item, dict) for item in value):
+                return pd.DataFrame(value)
+            return pd.DataFrame({"value": value})
+        if isinstance(value, dict):
+            if not value:
+                return pd.DataFrame()
+            try:
+                if all(isinstance(v, (list, tuple, pd.Series)) for v in value.values()):
+                    return pd.DataFrame(value)
+            except Exception:
+                pass
+            return pd.DataFrame([value])
+        return pd.DataFrame()
+
+    @staticmethod
+    def _first_present(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
+        for key in keys:
+            if key in mapping:
+                return mapping[key]
+        return None
+
+    @staticmethod
+    def _extract_mcp_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "\n".join(part for part in parts if part).strip()
+        if isinstance(content, dict):
+            text = content.get("text")
+            if isinstance(text, str):
+                return text.strip()
+        return ""
+
+    @staticmethod
+    def _strip_code_fence(text: str) -> str:
+        fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return fenced.group(1).strip()
+        return text.strip()
+
+    @classmethod
+    def _parse_content_text(cls, text: str) -> Any:
+        cleaned = cls._strip_code_fence(text)
+        if not cleaned:
+            return None
+
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                return parser(cleaned)
+            except Exception:
+                continue
+        return None
+
+    @classmethod
+    def _extract_payload_from_result(cls, result: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            return {}
+
+        payload: dict[str, Any] = {}
+        structured = result.get("structuredContent")
+        if isinstance(structured, dict):
+            payload.update(structured)
+
+        for key, value in result.items():
+            if key == "structuredContent":
+                continue
+            payload.setdefault(key, value)
+
+        text = cls._extract_mcp_text(result.get("content"))
+        parsed = cls._parse_content_text(text) if text else None
+        if isinstance(parsed, dict):
+            for key, value in parsed.items():
+                payload.setdefault(key, value)
+        elif isinstance(parsed, list):
+            payload.setdefault("data", parsed)
+
+        return payload
+
+    def _screen_via_mcp(
+        self,
+        template: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> pd.DataFrame:
+        """Use Borsa-MCP for screening when borsapy fails."""
+        params: dict[str, Any] = {}
+        if template:
+            # Borsa-MCP uses "preset", but we keep "template" compatibility.
+            params["preset"] = template
+            params["template"] = template
+        if filters:
+            params.update(filters)
+
+        try:
+            response = self._call_mcp_tool_with_circuit_breaker("screen_securities", params)
+            payload = self._extract_payload_from_result(response)
+            rows = self._first_present(
+                payload,
+                ("data", "results", "securities", "stocks", "items", "matches"),
+            )
+            return self._coerce_dataframe(rows)
+        except Exception as exc:
+            logger.error(f"MCP screening fallback failed: {exc}")
+            return pd.DataFrame()
+
+    def _get_financials_via_mcp(self, symbol: str) -> dict[str, pd.DataFrame]:
+        """Use Borsa-MCP for financial statements when borsapy fails."""
+        empty = {
+            "balance_sheet": pd.DataFrame(),
+            "income_stmt": pd.DataFrame(),
+            "cash_flow": pd.DataFrame(),
+        }
+
+        try:
+            response = self._call_mcp_tool_with_circuit_breaker(
+                "get_financial_statements",
+                {"symbol": self._normalize_symbol(symbol)},
+            )
+            payload = self._extract_payload_from_result(response)
+
+            data_payload = payload.get("data")
+            if isinstance(data_payload, dict):
+                for key, value in data_payload.items():
+                    payload.setdefault(key, value)
+
+            balance_sheet = self._coerce_dataframe(
+                self._first_present(payload, ("balance_sheet", "balanceSheet", "balance"))
+            )
+            income_stmt = self._coerce_dataframe(
+                self._first_present(payload, ("income_stmt", "income_statement", "incomeStatement"))
+            )
+            cash_flow = self._coerce_dataframe(
+                self._first_present(payload, ("cash_flow", "cashflow", "cashFlow"))
+            )
+
+            return {
+                "balance_sheet": balance_sheet,
+                "income_stmt": income_stmt,
+                "cash_flow": cash_flow,
+            }
+        except Exception as exc:
+            logger.error(f"MCP financial statements fallback failed for {symbol}: {exc}")
+            return empty
+
+    def _get_ratios_via_mcp(self, symbol: str) -> pd.DataFrame:
+        """Use Borsa-MCP for financial ratios when borsapy fails."""
+        try:
+            response = self._call_mcp_tool_with_circuit_breaker(
+                "get_financial_ratios",
+                {"symbol": self._normalize_symbol(symbol)},
+            )
+            payload = self._extract_payload_from_result(response)
+
+            ratios = self._first_present(payload, ("ratios", "financial_ratios", "data"))
+            if isinstance(ratios, dict) and "ratios" in ratios:
+                ratios = ratios.get("ratios")
+            return self._coerce_dataframe(ratios)
+        except Exception as exc:
+            logger.error(f"MCP financial ratios fallback failed for {symbol}: {exc}")
+            return pd.DataFrame()
+
+    def _call_mcp_tool_with_circuit_breaker(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call MCP tool with circuit breaker protection."""
+        return self._circuit_breaker.call(self._call_mcp_tool, tool_name, params)
+
+    @staticmethod
+    def _parse_mcp_jsonrpc_response(response: httpx.Response) -> dict[str, Any]:
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/event-stream" in content_type:
+            payloads: list[dict[str, Any]] = []
+            for line in response.text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                content = line[5:].strip()
+                if not content or content == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict):
+                    payloads.append(data)
+
+            if not payloads:
+                raise ValueError("MCP SSE response contained no JSON payloads.")
+
+            for payload in reversed(payloads):
+                if "result" in payload or "error" in payload:
+                    return payload
+            return payloads[-1]
+
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("MCP response payload is not a JSON object.")
+        return payload
+
+    @retry_with_backoff(max_retries=3, base_delay=1, max_delay=10, backoff_factor=2, jitter=True)
+    def _call_mcp_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Make a call to the Borsa-MCP endpoint with retry logic."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": params,
+            },
+        }
+
+        try:
+            response = self._session.post(self._mcp_endpoint, json=payload)
+            response.raise_for_status()
+
+            rpc_payload = self._parse_mcp_jsonrpc_response(response)
+            if "error" in rpc_payload:
+                error = rpc_payload.get("error")
+                if isinstance(error, dict):
+                    message = str(error.get("message", error))
+                else:
+                    message = str(error)
+                raise RuntimeError(message)
+
+            result = rpc_payload.get("result", {})
+            if isinstance(result, dict) and result.get("isError") is True:
+                message = self._extract_mcp_text(result.get("content")) or "MCP tool returned isError=true."
+                raise RuntimeError(message)
+
+            if isinstance(result, dict):
+                return result
+            if result is None:
+                return {}
+            return {"data": result}
+        except httpx.RequestError as exc:
+            logger.error(f"Request error calling MCP tool {tool_name}: {exc}")
+            raise
+        except Exception as exc:
+            logger.error(f"Error calling MCP tool {tool_name}: {exc}")
+            raise
 
     # -------------------------------------------------------------------------
     # Macro/Economic Data
@@ -654,6 +1211,16 @@ class BorsapyClient:
         self._index_cache.clear()
         self._index_components_cache.clear()
 
+    def close(self):
+        """Close HTTP resources used by MCP fallback."""
+        try:
+            self._session.close()
+        except Exception:
+            pass
+
+    def __del__(self):
+        self.close()
+
     def save_to_cache(
         self,
         data: pd.DataFrame,
@@ -675,7 +1242,7 @@ class BorsapyClient:
             path = self.cache_dir / f"{filename}.csv"
             data.to_csv(path)
 
-        print(f"  Saved to cache: {path}")
+        logger.info(f"  Saved to cache: {path}")
 
     def load_from_cache(
         self,
@@ -712,6 +1279,9 @@ class BorsapyClient:
 
 
 # Convenience function for quick access
-def get_client(cache_dir: Optional[Path] = None) -> BorsapyClient:
+def get_client(
+    cache_dir: Optional[Path] = None,
+    use_mcp_fallback: bool = True,
+) -> BorsapyClient:
     """Get a BorsapyClient instance."""
-    return BorsapyClient(cache_dir=cache_dir)
+    return BorsapyClient(cache_dir=cache_dir, use_mcp_fallback=use_mcp_fallback)

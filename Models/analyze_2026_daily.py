@@ -12,21 +12,21 @@ Also attempts to add XU030 benchmark from Yahoo Finance (`XU030.IS`).
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
-
-try:
-    import yfinance as yf
-except Exception:
-    yf = None
-
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+logger = logging.getLogger(__name__)
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
 
 WIN_MARK = "✅"
 LOSE_MARK = "❌"
@@ -135,7 +135,7 @@ def _load_xu030_from_yfinance(symbol: str, year: int) -> Tuple[pd.Series | None,
 
     close.index = pd.to_datetime(close.index, errors="coerce")
     close = close[close.index.notna()].sort_index()
-    returns = close.pct_change(fill_method=None).dropna()
+    returns = close.pct_change().dropna()
     returns = returns[returns.index.year == year]
     if returns.empty:
         return None, f"no {year} returns for {symbol}"
@@ -280,9 +280,9 @@ def main() -> None:
     if not args.skip_xu030:
         xu030, xu030_err = _load_xu030_from_yfinance(args.xu030_symbol, year)
         if xu030 is None:
-            print(f"XU030 unavailable ({args.xu030_symbol}): {xu030_err}")
+            logger.info(f"XU030 unavailable ({args.xu030_symbol}): {xu030_err}")
         else:
-            print(f"Loaded XU030 benchmark from Yahoo ({args.xu030_symbol}) with {len(xu030)} rows")
+            logger.info(f"Loaded XU030 benchmark from Yahoo ({args.xu030_symbol}) with {len(xu030)} rows")
 
     factor_returns: Dict[str, pd.Series] = {}
     for factor_dir in sorted([p for p in results_dir.iterdir() if p.is_dir()]):
@@ -296,7 +296,7 @@ def main() -> None:
         try:
             series = _load_returns_series(returns_path, factor)
         except Exception as exc:
-            print(f"Skipping {factor}: {exc}")
+            logger.info(f"Skipping {factor}: {exc}")
             continue
 
         series = series[series.index.year == year]
@@ -400,7 +400,6 @@ def main() -> None:
         raise ValueError(f"No overlapping daily rows between factors and benchmark for year {year}")
 
     daily_wide = daily_wide.sort_index()
-    daily_long = pd.concat(long_frames, ignore_index=True).sort_values(["date", "Factor"])
     summary = pd.DataFrame(summary_rows).sort_values(
         ["Relative_Cumulative_Return_vs_XU100", "Avg_Daily_Excess_vs_XU100"],
         ascending=False,
@@ -410,14 +409,14 @@ def main() -> None:
 
     _write_excel_report(out_workbook, per_factor_daily, summary)
 
-    print("=" * 72)
-    print(f"DAILY FACTOR RETURN COMPARISON VS {benchmark_name.upper()} (+XU030) ({year})")
-    print("=" * 72)
-    print(f"Benchmark days in scope: {len(benchmark)}")
-    print(f"Factors compared: {len(summary)}")
-    print(f"Date range: {daily_wide.index.min().date()} -> {daily_wide.index.max().date()}")
-    print("")
-    print("Top 10 by relative cumulative return:")
+    logger.info("=" * 72)
+    logger.info(f"DAILY FACTOR RETURN COMPARISON VS {benchmark_name.upper()} (+XU030) ({year})")
+    logger.info("=" * 72)
+    logger.info(f"Benchmark days in scope: {len(benchmark)}")
+    logger.info(f"Factors compared: {len(summary)}")
+    logger.info(f"Date range: {daily_wide.index.min().date()} -> {daily_wide.index.max().date()}")
+    logger.info("")
+    logger.info("Top 10 by relative cumulative return:")
     top_cols = [
         "Factor",
         "Obs_Days",
@@ -426,9 +425,9 @@ def main() -> None:
         "Outperform_Rate_vs_XU100",
         "Information_Ratio_vs_XU100",
     ]
-    print(summary[top_cols].head(10).to_string(index=False))
-    print("")
-    print(f"Saved: {out_workbook}")
+    logger.info(summary[top_cols].head(10).to_string(index=False))
+    logger.info("")
+    logger.info(f"Saved: {out_workbook}")
 
 
 if __name__ == "__main__":

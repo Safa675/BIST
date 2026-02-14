@@ -7,12 +7,28 @@ Functions to:
 3. Compute axis scores using quintile bucket selection
 """
 
+import logging
 from typing import Dict, Tuple
 
-import os
 import numpy as np
 import pandas as pd
 
+from Models.common.utils import (
+    MIN_ROLLING_OBS_RATIO,
+    align_panel_to_contract,
+    cross_sectional_zscore,
+    # Consolidated utilities (Phase 2 refactoring)
+    debug_enabled,
+    debug_log,
+    rolling_cumulative_return,
+    validate_numeric_panel,
+    validate_reference_axes,
+)
+from Models.common.utils import (
+    cross_sectional_rank as _cross_sectional_rank,
+)
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PARAMETERS
@@ -25,91 +41,21 @@ BUCKET_LABELS = ("Q1_Low", "Q2_LowMid", "Q3_Center", "Q4_HighMid", "Q5_High")
 # Multi-lookback ensemble (structural horizons: 1mo / 1q / 6mo / 1yr)
 ENSEMBLE_LOOKBACK_WINDOWS = (21, 63, 126, 252)
 ENSEMBLE_LOOKBACK_WEIGHTS = (0.25, 0.25, 0.25, 0.25)  # equal weight — no tuning
-MIN_ROLLING_OBS_RATIO = 0.5
 
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (Aliases for backward compatibility)
 # ============================================================================
 
-DEBUG_ENV_VAR = "DEBUG"
+_debug_enabled = debug_enabled
+_validate_reference_axes = validate_reference_axes
+_validate_numeric_panel = validate_numeric_panel
+_align_panel_to_contract = align_panel_to_contract
+cross_sectional_rank = _cross_sectional_rank
 
 
-def _debug_enabled() -> bool:
-    return os.getenv(DEBUG_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _debug_log(message: str) -> None:
-    if _debug_enabled():
-        print(f"  [FACTOR_DEBUG] {message}")
-
-
-def _validate_reference_axes(
-    dates: pd.DatetimeIndex,
-    tickers: pd.Index,
-    context: str,
-) -> tuple[pd.DatetimeIndex, pd.Index]:
-    """Validate reference dates/tickers used for panel alignment."""
-    normalized_dates = pd.DatetimeIndex(pd.to_datetime(pd.Index(dates), errors="coerce"))
-    if len(normalized_dates) == 0:
-        raise ValueError(f"{context}: dates index is empty")
-    if normalized_dates.hasnans:
-        raise ValueError(f"{context}: dates index contains NaT")
-    if normalized_dates.has_duplicates:
-        raise ValueError(f"{context}: dates index contains duplicate entries")
-    if not normalized_dates.is_monotonic_increasing:
-        raise ValueError(f"{context}: dates index must be monotonic increasing")
-
-    normalized_tickers = pd.Index(tickers)
-    if len(normalized_tickers) == 0:
-        raise ValueError(f"{context}: ticker index is empty")
-    if normalized_tickers.has_duplicates:
-        duplicate_tickers = normalized_tickers[normalized_tickers.duplicated()].unique().tolist()[:5]
-        raise ValueError(f"{context}: ticker index has duplicates (sample={duplicate_tickers})")
-
-    return normalized_dates, normalized_tickers
-
-
-def _validate_numeric_panel(panel: pd.DataFrame, panel_name: str) -> pd.DataFrame:
-    """Validate raw panel structure before alignment."""
-    if panel is None or not isinstance(panel, pd.DataFrame):
-        raise TypeError(f"{panel_name}: expected pandas.DataFrame")
-
-    normalized = panel.copy()
-    normalized.index = pd.DatetimeIndex(pd.to_datetime(normalized.index, errors="coerce"))
-    if normalized.index.hasnans:
-        raise ValueError(f"{panel_name}: index contains NaT values")
-    if normalized.index.has_duplicates:
-        raise ValueError(f"{panel_name}: index contains duplicate dates")
-    if not normalized.index.is_monotonic_increasing:
-        raise ValueError(f"{panel_name}: index must be monotonic increasing")
-    if normalized.columns.has_duplicates:
-        duplicate_cols = normalized.columns[normalized.columns.duplicated()].unique().tolist()[:5]
-        raise ValueError(f"{panel_name}: duplicate ticker columns found (sample={duplicate_cols})")
-
-    object_cols = normalized.select_dtypes(include=["object"]).columns.tolist()
-    if object_cols:
-        raise TypeError(f"{panel_name}: object dtype columns are not allowed (sample={object_cols[:5]})")
-
-    try:
-        return normalized.astype(float)
-    except Exception as exc:  # pragma: no cover - defensive branch
-        raise TypeError(f"{panel_name}: cannot cast panel to float ({exc})") from exc
-
-
-def _align_panel_to_contract(
-    panel: pd.DataFrame,
-    panel_name: str,
-    dates: pd.DatetimeIndex,
-    tickers: pd.Index,
-) -> pd.DataFrame:
-    validated = _validate_numeric_panel(panel, panel_name)
-    aligned = validated.reindex(index=dates, columns=tickers)
-    _debug_log(
-        f"{panel_name}: shape={aligned.shape[0]}x{aligned.shape[1]}, "
-        f"non_na={int(aligned.notna().sum().sum())}"
-    )
-    return aligned
+def _debug_log(msg: str) -> None:
+    debug_log(msg, prefix="FACTOR_DEBUG")
 
 
 def _get_panel(
@@ -122,42 +68,6 @@ def _get_panel(
     if panel is None:
         return None
     return _align_panel_to_contract(panel, panel_name, dates, tickers)
-
-def cross_sectional_zscore(panel: pd.DataFrame) -> pd.DataFrame:
-    """Cross-sectional z-score by date."""
-    panel = _validate_numeric_panel(panel, "cross_sectional_zscore_input")
-    row_mean = panel.mean(axis=1)
-    row_std = panel.std(axis=1).replace(0.0, np.nan)
-    return panel.sub(row_mean, axis=0).div(row_std, axis=0)
-
-
-def cross_sectional_rank(panel: pd.DataFrame, higher_is_better: bool = True) -> pd.DataFrame:
-    """Cross-sectional percentile rank by date, scaled to 0-100.
-
-    Uses 'average' method for ties, producing ranks in (0, 100].
-    The lowest ranked stock gets a small positive value, not 0.
-    """
-    panel = _validate_numeric_panel(panel, "cross_sectional_rank_input")
-    ranks = panel.rank(axis=1, pct=True, method="average")
-    if not higher_is_better:
-        ranks = 1.0 - ranks
-    return (ranks * 100.0).where(panel.notna())
-
-
-def rolling_cumulative_return(daily_returns: pd.Series, lookback: int, min_obs: int | None = None) -> pd.Series:
-    """Compute rolling compounded returns using log-sum for numerical stability.
-
-    Missing days are excluded from the calculation (not treated as 0% return).
-    Uses log1p/expm1 for numerical stability with small returns.
-    """
-    if min_obs is None:
-        min_obs = max(int(lookback * MIN_ROLLING_OBS_RATIO), 10)
-    # Clip extreme negative returns to prevent log of negative numbers
-    clipped = daily_returns.clip(lower=-0.99)
-    log_growth = np.log1p(clipped)
-    # Use min_periods to handle missing data properly (NaNs don't contribute)
-    roll_log_sum = log_growth.rolling(lookback, min_periods=min_obs).sum()
-    return np.expm1(roll_log_sum)
 
 
 # ============================================================================
@@ -186,13 +96,15 @@ def _combine_components_properly(
     ]
     stacked = np.stack([df.values for df in aligned], axis=0)  # (n_components, n_dates, n_tickers)
 
-    # Mean over components, ignoring NaNs
-    with np.errstate(all='ignore'):
-        result_values = np.nanmean(stacked, axis=0)
-
-    # Where ALL components are NaN, result should be NaN
-    all_nan_mask = np.all(np.isnan(stacked), axis=0)
-    result_values[all_nan_mask] = np.nan
+    # Mean over components, ignoring NaNs (without runtime warnings for all-NaN slices)
+    valid_counts = np.sum(~np.isnan(stacked), axis=0)
+    summed = np.nansum(stacked, axis=0)
+    result_values = np.divide(
+        summed,
+        valid_counts,
+        out=np.full_like(summed, np.nan),
+        where=valid_counts > 0,
+    )
 
     return pd.DataFrame(result_values, index=dates, columns=tickers)
 
@@ -224,10 +136,10 @@ def combine_quality_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.Datetim
         components.append(("Piotroski", cross_sectional_zscore(piotroski)))
 
     if not components:
-        print("    ⚠️  Quality axis has no valid components")
+        logger.warning("    ⚠️  Quality axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Quality axis components: {[c[0] for c in components]}")
+    logger.info(f"    Quality axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -259,10 +171,10 @@ def combine_liquidity_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.Datet
         components.append(("Spread", -cross_sectional_zscore(spread)))
 
     if not components:
-        print("    ⚠️  Liquidity axis has no valid components")
+        logger.warning("    ⚠️  Liquidity axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Liquidity axis components: {[c[0] for c in components]}")
+    logger.info(f"    Liquidity axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -293,10 +205,10 @@ def combine_trading_intensity_axis(axis_panels: Dict[str, pd.DataFrame], dates: 
         components.append(("TurnoverVel", cross_sectional_zscore(turnover_vel)))
 
     if not components:
-        print("    ⚠️  Trading Intensity axis has no valid components")
+        logger.warning("    ⚠️  Trading Intensity axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Trading Intensity axis components: {[c[0] for c in components]}")
+    logger.info(f"    Trading Intensity axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -319,10 +231,10 @@ def combine_sentiment_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.Datet
         components.append(("Reversal", cross_sectional_zscore(reversal)))
 
     if not components:
-        print("    ⚠️  Sentiment axis has no valid components")
+        logger.warning("    ⚠️  Sentiment axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Sentiment axis components: {[c[0] for c in components]}")
+    logger.info(f"    Sentiment axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -341,10 +253,10 @@ def combine_fundmom_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.Datetim
         components.append(("SalesAccel", cross_sectional_zscore(sales_accel)))
 
     if not components:
-        print("    ⚠️  FundMom axis has no valid components")
+        logger.warning("    ⚠️  FundMom axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    FundMom axis components: {[c[0] for c in components]}")
+    logger.info(f"    FundMom axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -366,10 +278,10 @@ def combine_carry_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.DatetimeI
             components.append(("ShareholderYield", cross_sectional_zscore(sh_yield)))
 
     if not components:
-        print("    ⚠️  Carry axis has no valid components")
+        logger.warning("    ⚠️  Carry axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Carry axis components: {[c[0] for c in components]}")
+    logger.info(f"    Carry axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -389,10 +301,10 @@ def combine_defensive_axis(axis_panels: Dict[str, pd.DataFrame], dates: pd.Datet
         components.append(("LowBeta", -cross_sectional_zscore(beta)))
 
     if not components:
-        print("    ⚠️  Defensive axis has no valid components")
+        logger.warning("    ⚠️  Defensive axis has no valid components")
         return pd.DataFrame(np.nan, index=dates, columns=tickers)
 
-    print(f"    Defensive axis components: {[c[0] for c in components]}")
+    logger.info(f"    Defensive axis components: {[c[0] for c in components]}")
 
     return _combine_components_properly(components, dates, tickers)
 
@@ -642,7 +554,7 @@ def compute_mwu_weights(
     unique_months = month_periods.unique().sort_values()
 
     if debug:
-        print(f"  [FIVE_FACTOR_DEBUG] MWU factors: {n_factors}, months: {len(unique_months)}")
+        logger.info(f"  [FIVE_FACTOR_DEBUG] MWU factors: {n_factors}, months: {len(unique_months)}")
 
     monthly_returns = pd.DataFrame(index=unique_months, columns=factor_names, dtype=float)
     monthly_valid_days = pd.DataFrame(index=unique_months, columns=factor_names, dtype=int)
@@ -683,7 +595,7 @@ def compute_mwu_weights(
             walkforward_last_test_year = int(dates.max().year)
 
         if debug:
-            print(
+            logger.info(
                 f"  [FIVE_FACTOR_DEBUG] MWU walk-forward enabled: "
                 f"train_years={walkforward_train_years}, "
                 f"test_years={walkforward_first_test_year}-{walkforward_last_test_year}"
@@ -699,7 +611,7 @@ def compute_mwu_weights(
             if train_monthly.empty:
                 w_year = equal_weights.copy()
                 if debug:
-                    print(
+                    logger.info(
                         f"  [FIVE_FACTOR_DEBUG] MWU fold test={test_year}: "
                         f"train={train_start_year}-{train_end_year}, "
                         "months=0 -> equal weights"
@@ -709,7 +621,7 @@ def compute_mwu_weights(
                 if debug:
                     top_idx = np.argsort(-w_year)[:3]
                     top_weights = ", ".join([f"{factor_names[k]}={w_year[k]:.1%}" for k in top_idx])
-                    print(
+                    logger.info(
                         f"  [FIVE_FACTOR_DEBUG] MWU fold test={test_year}: "
                         f"train={train_start_year}-{train_end_year}, "
                         f"months={len(train_monthly)}, top_weights=[{top_weights}]"
@@ -727,13 +639,13 @@ def compute_mwu_weights(
         elif i == first_backtest_month_idx and warmup_months > 0:
             # WARM-UP: Use previous months to initialize weights
             if i >= warmup_months:
-                print(f"  🔥 MWU Warm-up: Using {warmup_months} months of historical data for initial weights")
+                logger.info(f"  🔥 MWU Warm-up: Using {warmup_months} months of historical data for initial weights")
                 warmup_monthly = monthly_returns.iloc[i - warmup_months : i]
                 w = _compute_rank_squared_weights(warmup_monthly, decay, n_factors)
-                print(f"  ✅ Initialized with warm-up weights (top 3: {', '.join([f'{factor_names[k]}={w[k]:.1%}' for k in np.argsort(-w)[:3]])})")
+                logger.info(f"  ✅ Initialized with warm-up weights (top 3: {', '.join([f'{factor_names[k]}={w[k]:.1%}' for k in np.argsort(-w)[:3]])})")
             else:
                 w = equal_weights.copy()
-                print(f"  ⚠️  Only {i} months of history (need {warmup_months}) - using equal weights")
+                logger.warning(f"  ⚠️  Only {i} months of history (need {warmup_months}) - using equal weights")
         else:
             # Exponentially-weighted average of all available past monthly returns
             history_monthly = monthly_returns.iloc[:i]
@@ -751,12 +663,12 @@ def compute_mwu_weights(
                 if walkforward_enabled and int(month.year) in walkforward_train_ranges:
                     tr_start, tr_end = walkforward_train_ranges[int(month.year)]
                     walkforward_str = f" train={tr_start}-{tr_end}"
-                print(
+                logger.info(
                     f"  [FIVE_FACTOR_DEBUG] MWU month={month}: top_weights=[{top_weights}]"
                     f"{walkforward_str} prev_month={prev_month} spreads=[{prev_top_str}]"
                 )
             else:
-                print(f"  [FIVE_FACTOR_DEBUG] MWU month={month}: top_weights=[{top_weights}] (initial)")
+                logger.info(f"  [FIVE_FACTOR_DEBUG] MWU month={month}: top_weights=[{top_weights}] (initial)")
 
         # Record for all days in this month
         month_mask = month_periods == month

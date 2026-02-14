@@ -9,16 +9,14 @@ Uses borsapy EMA indicator for trend-following signals:
 Same concept as SMA crossover but faster-reacting.
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_ema_signals(
     close_df: pd.DataFrame,
     dates: pd.DatetimeIndex,
@@ -40,7 +38,7 @@ def build_ema_signals(
         DataFrame (dates x tickers) with EMA crossover scores
         Positive = bullish (short EMA > long EMA)
     """
-    print(f"\n🔧 Building EMA({short_period}/{long_period}) crossover signals...")
+    logger.info(f"\n🔧 Building EMA({short_period}/{long_period}) crossover signals...")
 
     ema_short = BorsapyIndicators.build_ema_panel(close_df, period=short_period)
     ema_long = BorsapyIndicators.build_ema_panel(close_df, period=long_period)
@@ -55,7 +53,7 @@ def build_ema_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
 
-    print(f"  ✅ EMA signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ EMA signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

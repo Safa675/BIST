@@ -10,16 +10,13 @@ Uses borsapy Ichimoku Cloud indicator for trend-following signals:
 Signal: Multi-factor Ichimoku score (-3 to +3)
 """
 
+import logging
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_ichimoku_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -47,7 +44,7 @@ def build_ichimoku_signals(
         DataFrame (dates x tickers) with Ichimoku composite scores
         Score range: -3 (all bearish) to +3 (all bullish)
     """
-    print(f"\n🔧 Building Ichimoku({conversion_period},{base_period},{span_b_period}) signals...")
+    logger.info(f"\n🔧 Building Ichimoku({conversion_period},{base_period},{span_b_period}) signals...")
 
     tickers = close_df.columns
     signal_data = {}
@@ -90,7 +87,7 @@ def build_ichimoku_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
 
-    print(f"  ✅ Ichimoku signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ Ichimoku signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

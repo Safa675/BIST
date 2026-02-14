@@ -7,22 +7,25 @@ Calculates composite investment scores based on 3 DIRECT metrics (higher = bette
 3. Investment Efficiency = ΔRevenue / ΔTotal Assets (higher = better ROI)
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
-    sum_ttm,
-    get_consolidated_sheet,
-    pick_row_from_sheet,
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
+    get_consolidated_sheet,
+    pick_row,
+    pick_row_from_sheet,
+    sum_ttm,
     validate_signal_panel_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -116,7 +119,7 @@ def build_investment_signals(
     Returns:
         DataFrame (dates x tickers) with investment scores
     """
-    print("\n🔧 Building investment signals...")
+    logger.info("\n🔧 Building investment signals...")
     
     panels = {
         'rd_intensity': {},
@@ -197,11 +200,11 @@ def build_investment_signals(
         
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers...")
+            logger.info(f"  Processed {count} tickers...")
     
     # Cross-sectional z-score normalization (Bug #2 fix)
     # Normalize each ratio type before combining to prevent scale bias
-    print("  Normalizing ratios (z-score per date)...")
+    logger.info("  Normalizing ratios (z-score per date)...")
     normalized_panels = {}
     for panel_name, panel_dict in panels.items():
         if panel_dict:
@@ -215,7 +218,7 @@ def build_investment_signals(
             normalized_panels[panel_name] = df_zscore
     
     # Combine into composite score
-    print("  Combining into composite investment score...")
+    logger.info("  Combining into composite investment score...")
     composite_panel = {}
     
     for ticker in close_df.columns:
@@ -230,12 +233,17 @@ def build_investment_signals(
             composite_panel[ticker] = composite
     
     result = pd.DataFrame(composite_panel, index=dates)
+
+    # Apply staleness-based down-weighting
+    result = apply_staleness_weighting(result)
+
     result = validate_signal_panel_schema(
         result,
         dates=dates,
         tickers=close_df.columns,
         signal_name="investment",
         context="final score panel",
+        dtype=np.float32,
     )
-    print(f"  ✅ Investment signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Investment signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

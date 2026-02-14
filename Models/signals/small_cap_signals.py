@@ -10,22 +10,24 @@ Calculates composite small cap scores (smaller = better) based on:
 This is the pure "size premium" factor - favors smaller companies.
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
-    sum_ttm,
-    get_consolidated_sheet,
-    pick_row_from_sheet,
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
     apply_lag,
+    coerce_quarter_cols,
+    get_consolidated_sheet,
+    pick_row,
+    pick_row_from_sheet,
+    sum_ttm,
     validate_signal_panel_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -102,7 +104,7 @@ def build_small_cap_signals(
     Returns:
         DataFrame (dates x tickers) with inverted size scores (small caps score higher)
     """
-    print("\n🔧 Building small cap signals...")
+    logger.info("\n🔧 Building small cap signals...")
     
     panels = {
         'market_cap': {},
@@ -114,14 +116,14 @@ def build_small_cap_signals(
     fundamentals_parquet = data_loader.load_fundamentals_parquet()
     
     # OPTIMIZATION: Pre-compute volume percentiles for all dates (do once, not per ticker!)
-    print("  Pre-computing volume percentiles...")
+    logger.info("  Pre-computing volume percentiles...")
     volume_percentiles = {}
     for date in volume_df.index:
         date_volumes = volume_df.loc[date].dropna()
         if len(date_volumes) > 1:
             # Store the sorted volumes for quick percentile lookup
             volume_percentiles[date] = date_volumes.sort_values()
-    print(f"  Cached percentiles for {len(volume_percentiles)} dates")
+    logger.info(f"  Cached percentiles for {len(volume_percentiles)} dates")
 
     count = 0
     for ticker, fund_data in fundamentals.items():
@@ -219,10 +221,10 @@ def build_small_cap_signals(
         
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers...")
+            logger.info(f"  Processed {count} tickers...")
     
     # Combine and INVERT (smaller = higher score)
-    print("  Combining and inverting size scores...")
+    logger.info("  Combining and inverting size scores...")
     composite_panel = {}
     
     for ticker in close_df.columns:
@@ -246,6 +248,7 @@ def build_small_cap_signals(
         tickers=close_df.columns,
         signal_name="small_cap",
         context="final score panel",
+        dtype=np.float32,
     )
-    print(f"  ✅ Size signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Size signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

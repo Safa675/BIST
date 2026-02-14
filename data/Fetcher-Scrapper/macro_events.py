@@ -24,10 +24,12 @@ Usage:
     news = client.get_stock_news("THYAO", limit=10)
 """
 
+import logging
 from datetime import datetime, timedelta
 import json
 
 import pandas as pd
+logger = logging.getLogger(__name__)
 
 try:
     import borsapy as bp
@@ -175,7 +177,7 @@ class MacroEventsClient:
             return calendar
 
         except Exception as e:
-            print(f"  Warning: Failed to get economic calendar: {e}")
+            logger.info(f"  Warning: Failed to get economic calendar: {e}")
             return pd.DataFrame()
 
     def get_upcoming_high_impact_events(
@@ -239,7 +241,7 @@ class MacroEventsClient:
             return data
 
         except Exception as e:
-            print(f"  Warning: Failed to get inflation data: {e}")
+            logger.info(f"  Warning: Failed to get inflation data: {e}")
             return pd.DataFrame()
 
     def get_latest_inflation(self) -> dict:
@@ -323,7 +325,7 @@ class MacroEventsClient:
             return result
 
         except Exception as e:
-            print(f"  Warning: Failed to get bond yields: {e}")
+            logger.info(f"  Warning: Failed to get bond yields: {e}")
             return {"error": str(e)}
 
     def get_yield_curve(self) -> pd.DataFrame:
@@ -404,7 +406,7 @@ class MacroEventsClient:
             return result
 
         except Exception as e:
-            print(f"  Warning: Failed to get TCMB rates: {e}")
+            logger.info(f"  Warning: Failed to get TCMB rates: {e}")
             return {"error": str(e)}
 
     # -------------------------------------------------------------------------
@@ -448,7 +450,7 @@ class MacroEventsClient:
             return news if news else []
 
         except Exception as e:
-            print(f"  Warning: Failed to get news for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to get news for {symbol}: {e}")
             return []
 
     def get_earnings_calendar(
@@ -474,7 +476,7 @@ class MacroEventsClient:
             return earnings
 
         except Exception as e:
-            print(f"  Warning: Failed to get earnings calendar for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to get earnings calendar for {symbol}: {e}")
             return pd.DataFrame()
 
     def get_analyst_recommendations(
@@ -526,7 +528,7 @@ class MacroEventsClient:
             return result
 
         except Exception as e:
-            print(f"  Warning: Failed to get analyst data for {symbol}: {e}")
+            logger.info(f"  Warning: Failed to get analyst data for {symbol}: {e}")
             return {"symbol": symbol, "error": str(e)}
 
     # -------------------------------------------------------------------------
@@ -555,7 +557,7 @@ class MacroEventsClient:
             return eurobonds
 
         except Exception as e:
-            print(f"  Warning: Failed to get eurobonds: {e}")
+            logger.info(f"  Warning: Failed to get eurobonds: {e}")
             return pd.DataFrame()
 
     # -------------------------------------------------------------------------

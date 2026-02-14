@@ -16,11 +16,12 @@ This should:
 - Combine momentum with fundamentals
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
+import pandas as pd
 
-
+logger = logging.getLogger(__name__)
 def build_breakout_value_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -47,8 +48,8 @@ def build_breakout_value_signals(
     Returns:
         DataFrame (dates x tickers) with composite scores
     """
-    print(f"\n🔧 Building Breakout + Value composite signals...")
-    print(f"   Donchian: {donchian_lookback} days, Breakout threshold: {breakout_threshold*100:.0f}%")
+    logger.info("\n🔧 Building Breakout + Value composite signals...")
+    logger.info(f"   Donchian: {donchian_lookback} days, Breakout threshold: {breakout_threshold*100:.0f}%")
 
     # Step 1: Calculate Donchian channel position
     high_max = high_df.rolling(donchian_lookback, min_periods=donchian_lookback).max()
@@ -60,7 +61,7 @@ def build_breakout_value_signals(
 
     # Step 2: Get or compute value signals
     if value_signals is None:
-        from signals.value_signals import build_value_signals
+        from Models.signals.value_signals import build_value_signals
         fundamentals = data_loader.load_fundamentals()
         value_signals = build_value_signals(fundamentals, close_df, dates, data_loader)
 
@@ -75,7 +76,7 @@ def build_breakout_value_signals(
     filtered_signals = composite.notna().sum().sum()
     filter_pct = (1 - filtered_signals / total_signals) * 100 if total_signals > 0 else 0
 
-    print(f"  ✅ Breakout + Value signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
-    print(f"     Breakout filter removed {filter_pct:.1f}% of value signals")
+    logger.info(f"  ✅ Breakout + Value signals: {composite.shape[0]} days × {composite.shape[1]} tickers")
+    logger.info(f"     Breakout filter removed {filter_pct:.1f}% of value signals")
 
     return composite

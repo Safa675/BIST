@@ -11,18 +11,14 @@ Runs a tiny backtest and prints:
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
-import sys
 
 import pandas as pd
 
-MODELS_DIR = Path(__file__).resolve().parent
-if str(MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(MODELS_DIR))
+from Models.portfolio_engine import PortfolioEngine
 
-from portfolio_engine import PortfolioEngine
-
-
+logger = logging.getLogger(__name__)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run tiny backtest diagnostics (Phase 4)")
     parser.add_argument("--factor", type=str, default="five_factor_rotation")
@@ -44,17 +40,17 @@ def main() -> None:
     if end <= start:
         raise ValueError("end-date must be after start-date")
 
-    print("=" * 84)
-    print("PHASE 4 DEBUG: BACKTEST INFRASTRUCTURE")
-    print("=" * 84)
-    print(f"factor={args.factor} period={start.date()}..{end.date()} rebalance={args.rebalance}")
+    logger.info("=" * 84)
+    logger.info("PHASE 4 DEBUG: BACKTEST INFRASTRUCTURE")
+    logger.info("=" * 84)
+    logger.info(f"factor={args.factor} period={start.date()}..{end.date()} rebalance={args.rebalance}")
 
     script_dir = Path(__file__).resolve().parent
     bist_root = script_dir.parent
     data_dir = bist_root / "data"
     regime_model_dir_candidates = [
         bist_root / "Simple Regime Filter" / "outputs",
-        bist_root / "Regime Filter" / "outputs",
+        bist_root / "regime_filter" / "outputs",
     ]
     regime_model_dir = next((p for p in regime_model_dir_candidates if p.exists()), regime_model_dir_candidates[0])
 
@@ -96,16 +92,16 @@ def main() -> None:
     returns = results["returns"]
     sanity = results.get("sanity_checks", pd.DataFrame())
 
-    print("\nKey metrics:")
-    print(f"  total_return={results['total_return']:.4%}")
-    print(f"  cagr={results['cagr']:.4%}")
-    print(f"  sharpe={results['sharpe']:.4f}")
-    print(f"  sortino={results['sortino']:.4f}")
-    print(f"  max_drawdown={results['max_drawdown']:.4%}")
-    print(f"  win_rate={results['win_rate']:.2%}")
-    print(f"  rebalance_count={results['rebalance_count']}")
-    print(f"  trade_count={results['trade_count']}")
-    print(f"  signal_lag_days={results.get('signal_lag_days')}")
+    logger.info("\nKey metrics:")
+    logger.info(f"  total_return={results['total_return']:.4%}")
+    logger.info(f"  cagr={results['cagr']:.4%}")
+    logger.info(f"  sharpe={results['sharpe']:.4f}")
+    logger.info(f"  sortino={results['sortino']:.4f}")
+    logger.info(f"  max_drawdown={results['max_drawdown']:.4%}")
+    logger.info(f"  win_rate={results['win_rate']:.2%}")
+    logger.info(f"  rebalance_count={results['rebalance_count']}")
+    logger.info(f"  trade_count={results['trade_count']}")
+    logger.info(f"  signal_lag_days={results.get('signal_lag_days')}")
 
     if not sanity.empty:
         show_cols = [
@@ -120,33 +116,33 @@ def main() -> None:
             "portfolio_return",
         ]
         show_cols = [c for c in show_cols if c in sanity.columns]
-        print("\nSanity table (tail 12 rows):")
-        print(sanity[show_cols].tail(12).to_string())
+        logger.info("\nSanity table (tail 12 rows):")
+        logger.info(sanity[show_cols].tail(12).to_string())
 
         invested = sanity[(sanity["allocation"] > 0) & (sanity["n_active_holdings"] > 0)]
         max_weight_dev = (
             float((invested["weight_sum_raw"] - 1.0).abs().max()) if not invested.empty else 0.0
         )
         nan_returns = int(sanity["portfolio_return"].isna().sum()) if "portfolio_return" in sanity.columns else 0
-        print("\nSanity summary:")
-        print(f"  invested_days={len(invested)}")
-        print(f"  max_weight_sum_deviation={max_weight_dev:.3e}")
-        print(f"  nan_portfolio_returns={nan_returns}")
+        logger.info("\nSanity summary:")
+        logger.info(f"  invested_days={len(invested)}")
+        logger.info(f"  max_weight_sum_deviation={max_weight_dev:.3e}")
+        logger.info(f"  nan_portfolio_returns={nan_returns}")
 
     if engine.xu100_prices is not None:
         xu100_alignment = (engine.xu100_prices.shift(-1) / engine.xu100_prices - 1.0).reindex(returns.index)
         common = pd.concat([returns.rename("strategy"), xu100_alignment.rename("xu100")], axis=1).dropna()
-        print("\nBenchmark alignment:")
-        print(f"  xu100_overlap_days={len(common)}/{len(returns)}")
+        logger.info("\nBenchmark alignment:")
+        logger.info(f"  xu100_overlap_days={len(common)}/{len(returns)}")
         if not common.empty:
             corr = common["strategy"].corr(common["xu100"])
-            print(f"  xu100_correlation={corr:.4f}")
+            logger.info(f"  xu100_correlation={corr:.4f}")
     else:
-        print("\nBenchmark alignment:")
-        print("  xu100_data=missing")
+        logger.info("\nBenchmark alignment:")
+        logger.info("  xu100_data=missing")
 
     xu030_file = engine.data_dir / "xu030_prices.csv"
-    print(f"  xu030_file_present={xu030_file.exists()}")
+    logger.info(f"  xu030_file_present={xu030_file.exists()}")
     if xu030_file.exists():
         try:
             xu030_df = pd.read_csv(xu030_file)
@@ -159,11 +155,11 @@ def main() -> None:
             ).sort_index()
             xu030_ret = (xu030_series.shift(-1) / xu030_series - 1.0).reindex(returns.index)
             xu030_common = pd.concat([returns.rename("strategy"), xu030_ret.rename("xu030")], axis=1).dropna()
-            print(f"  xu030_overlap_days={len(xu030_common)}/{len(returns)}")
+            logger.info(f"  xu030_overlap_days={len(xu030_common)}/{len(returns)}")
         except Exception as exc:
-            print(f"  xu030_read_error={exc}")
+            logger.info(f"  xu030_read_error={exc}")
 
-    print("\nDone. Tiny backtest diagnostics completed.")
+    logger.info("\nDone. Tiny backtest diagnostics completed.")
 
 
 if __name__ == "__main__":

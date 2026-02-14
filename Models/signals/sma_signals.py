@@ -9,12 +9,11 @@ Calculates SMA crossover scores based on:
 Higher score = stronger bullish signal (short MA above long MA)
 """
 
+import logging
+
 import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Dict
 
-
+logger = logging.getLogger(__name__)
 def build_sma_signals(
     close_df: pd.DataFrame,
     dates: pd.DatetimeIndex,
@@ -40,7 +39,7 @@ def build_sma_signals(
         - Negative score: Short MA below long MA (bearish)
         - Higher absolute value: Stronger signal
     """
-    print(f"\n🔧 Building {short_period}/{long_period} SMA signals...")
+    logger.info(f"\n🔧 Building {short_period}/{long_period} SMA signals...")
     
     # Calculate SMAs
     sma_short = close_df.rolling(short_period, min_periods=short_period).mean()
@@ -58,7 +57,7 @@ def build_sma_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
     
-    print(f"  ✅ SMA signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ SMA signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
     
     return result

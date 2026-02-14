@@ -9,17 +9,15 @@ Calculates risk-adjusted momentum scores based on:
 This follows the Fama-French momentum methodology with downside risk adjustment.
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import validate_signal_panel_schema
+from Models.common.utils import validate_signal_panel_schema
 
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # MOMENTUM CALCULATION PARAMETERS
 # ============================================================================
@@ -86,24 +84,23 @@ def calculate_downside_volatility(
         pd.DataFrame: Rolling downside volatility indexed by date, columns are tickers
     """
     # Calculate daily returns
-    daily_returns = close_df.pct_change(fill_method=None)
+    daily_returns = close_df.pct_change()
     
     # Shift returns to skip the most recent month (match 12-1 momentum)
     shifted_returns = daily_returns.shift(skip)
-    
-    # Calculate rolling downside volatility on shifted returns
-    def calc_downside_vol(window):
-        """Calculate downside volatility for a rolling window."""
-        negative_rets = window[window < 0]
-        if len(negative_rets) > 2:
-            return negative_rets.std()
-        return np.nan
-    
+
     # Use adjusted lookback since we're skipping the recent period
     effective_lookback = lookback - skip
-    downside_vol = shifted_returns.rolling(
-        effective_lookback, min_periods=int(effective_lookback * 0.5)
-    ).apply(calc_downside_vol, raw=False)
+    min_periods = int(effective_lookback * 0.5)
+
+    # Vectorized downside volatility:
+    # keep only negative returns, compute rolling std, and enforce
+    # the legacy minimum of >2 negative observations per window.
+    negative_only = shifted_returns.where(shifted_returns < 0.0)
+    total_counts = shifted_returns.rolling(effective_lookback, min_periods=min_periods).count()
+    negative_counts = negative_only.rolling(effective_lookback, min_periods=1).count()
+    downside_vol = negative_only.rolling(effective_lookback, min_periods=1).std()
+    downside_vol = downside_vol.where((total_counts >= min_periods) & (negative_counts > 2))
     
     return downside_vol
 
@@ -178,9 +175,9 @@ def build_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with risk-adjusted momentum scores
     """
-    print("\n🔧 Building momentum signals...")
-    print(f"  Momentum: {lookback} days lookback, {skip} days skip")
-    print(f"  Downside Vol: {vol_lookback} days lookback")
+    logger.info("\n🔧 Building momentum signals...")
+    logger.info(f"  Momentum: {lookback} days lookback, {skip} days skip")
+    logger.info(f"  Downside Vol: {vol_lookback} days lookback")
     
     # Calculate momentum scores
     momentum_scores = calculate_momentum_scores(
@@ -198,6 +195,7 @@ def build_momentum_signals(
         tickers=close_df.columns,
         signal_name="momentum",
         context="final score panel",
+        dtype=np.float32,
     )
     
     # Summary stats
@@ -205,9 +203,9 @@ def build_momentum_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.2f}, Std: {latest.std():.2f}")
-            print(f"  Latest scores - Min: {latest.min():.2f}, Max: {latest.max():.2f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.2f}, Std: {latest.std():.2f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.2f}, Max: {latest.max():.2f}")
     
-    print(f"  ✅ Momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
     
     return result

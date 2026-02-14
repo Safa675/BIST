@@ -10,15 +10,12 @@ Based on Quantpedia strategy: Momentum and Reversal Combined with Volatility Eff
 Signal: Composite z-score of all three factors
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # PARAMETERS
 # ============================================================================
@@ -67,7 +64,7 @@ def calculate_volatility_component(
 
     Lower volatility = Higher score (we want low-vol stocks)
     """
-    daily_returns = close_df.pct_change(fill_method=None)
+    daily_returns = close_df.pct_change()
     rolling_vol = daily_returns.rolling(lookback, min_periods=lookback // 2).std()
 
     # Convert to "low vol score": negative of volatility
@@ -150,10 +147,10 @@ def build_momentum_reversal_volatility_signals(
     Returns:
         DataFrame (dates x tickers) with combined scores
     """
-    print("\n🔧 Building momentum + reversal + volatility signals...")
-    print(f"  Momentum: {MOMENTUM_LOOKBACK}-{MOMENTUM_SKIP} days (40% weight)")
-    print(f"  Reversal: {REVERSAL_LOOKBACK} days (30% weight)")
-    print(f"  Volatility: {VOLATILITY_LOOKBACK} days (30% weight)")
+    logger.info("\n🔧 Building momentum + reversal + volatility signals...")
+    logger.info(f"  Momentum: {MOMENTUM_LOOKBACK}-{MOMENTUM_SKIP} days (40% weight)")
+    logger.info(f"  Reversal: {REVERSAL_LOOKBACK} days (30% weight)")
+    logger.info(f"  Volatility: {VOLATILITY_LOOKBACK} days (30% weight)")
 
     # Calculate combined scores
     combined_scores = calculate_combined_scores(close_df)
@@ -166,9 +163,9 @@ def build_momentum_reversal_volatility_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
-            print(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
 
-    print(f"  ✅ Combined signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Combined signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

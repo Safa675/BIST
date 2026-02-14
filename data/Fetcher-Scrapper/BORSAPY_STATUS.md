@@ -296,7 +296,7 @@ Real BIST Portfolio (5 stocks, 2 years):
 # Via DataLoader
 from Models.common.data_loader import DataLoader
 
-loader = DataLoader(data_dir="data", regime_model_dir="Regime Filter")
+loader = DataLoader(data_dir="data", regime_model_dir="regime_filter")
 
 # Get index components
 xu100 = loader.get_index_components_borsapy("XU100")

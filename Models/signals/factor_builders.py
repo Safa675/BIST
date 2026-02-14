@@ -5,23 +5,29 @@ Functions to build raw factor panels from price data and fundamentals.
 These panels are cached to avoid recomputation.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, Tuple
 
-import os
 import numpy as np
 import pandas as pd
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
+from Models.common.utils import (
+    align_numeric_panel,
     apply_lag,
     coerce_quarter_cols,
+    # Consolidated utilities (Phase 2 refactoring)
+    debug_enabled,
+    debug_log,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
     sum_ttm,
+    validate_reference_axes,
 )
+from Models.signals.value_signals import build_value_signals
 
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # TURKISH FUNDAMENTAL FIELD KEYS
@@ -102,6 +108,7 @@ MIN_ROLLING_OBS_RATIO = 0.5
 VOLATILITY_LOOKBACK_DAYS = 63
 BETA_LOOKBACK_DAYS = 252
 BETA_MIN_OBS = 126
+VALUE_GROWTH_LOOKBACK_DAYS = 252
 
 # Liquidity
 AMIHUD_LOOKBACK_DAYS = 21
@@ -123,8 +130,6 @@ EARNINGS_STABILITY_QUARTERS = 8
 # ============================================================================
 # FACTOR PANEL CONTRACT / VALIDATION
 # ============================================================================
-
-DEBUG_ENV_VAR = "DEBUG"
 
 FACTOR_PANEL_CONTRACT: Dict[str, Tuple[str, ...]] = {
     "quality": (
@@ -167,83 +172,19 @@ FACTOR_PANEL_CONTRACT: Dict[str, Tuple[str, ...]] = {
 }
 
 
-def _debug_enabled() -> bool:
-    return os.getenv(DEBUG_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
+# Aliases for backward compatibility (use consolidated utils)
+_debug_enabled = debug_enabled
+_validate_reference_axes = validate_reference_axes
+_align_numeric_panel = align_numeric_panel
 
 
-def _debug_log(message: str) -> None:
-    if _debug_enabled():
-        print(f"  [FACTOR_DEBUG] {message}")
+def _debug_log(msg: str) -> None:
+    debug_log(msg, prefix="FACTOR_DEBUG")
 
 
 def get_factor_panel_contract() -> Dict[str, Tuple[str, ...]]:
     """Return expected raw panel keys grouped by factor family."""
     return {name: tuple(keys) for name, keys in FACTOR_PANEL_CONTRACT.items()}
-
-
-def _validate_reference_axes(
-    dates: pd.DatetimeIndex,
-    tickers: pd.Index,
-    context: str,
-) -> tuple[pd.DatetimeIndex, pd.Index]:
-    """Validate reference axes used by all factor panels."""
-    normalized_dates = pd.DatetimeIndex(pd.to_datetime(pd.Index(dates), errors="coerce"))
-    if len(normalized_dates) == 0:
-        raise ValueError(f"{context}: dates index is empty")
-    if normalized_dates.hasnans:
-        raise ValueError(f"{context}: dates index contains NaT")
-    if normalized_dates.has_duplicates:
-        raise ValueError(f"{context}: dates index contains duplicates")
-    if not normalized_dates.is_monotonic_increasing:
-        raise ValueError(f"{context}: dates index must be monotonic increasing")
-
-    normalized_tickers = pd.Index(tickers)
-    if len(normalized_tickers) == 0:
-        raise ValueError(f"{context}: ticker index is empty")
-    if normalized_tickers.has_duplicates:
-        duplicate_tickers = normalized_tickers[normalized_tickers.duplicated()].unique().tolist()[:5]
-        raise ValueError(f"{context}: ticker index contains duplicates (sample={duplicate_tickers})")
-
-    return normalized_dates, normalized_tickers
-
-
-def _align_numeric_panel(
-    panel: pd.DataFrame,
-    panel_name: str,
-    dates: pd.DatetimeIndex,
-    tickers: pd.Index,
-) -> pd.DataFrame:
-    """Align panel to contract axes and reject object-typed payloads."""
-    if panel is None or not isinstance(panel, pd.DataFrame):
-        raise TypeError(f"{panel_name}: expected pandas.DataFrame")
-
-    aligned = panel.copy()
-    aligned.index = pd.DatetimeIndex(pd.to_datetime(aligned.index, errors="coerce"))
-    if aligned.index.hasnans:
-        raise ValueError(f"{panel_name}: index contains NaT")
-    if aligned.index.has_duplicates:
-        raise ValueError(f"{panel_name}: index contains duplicate dates")
-    if not aligned.index.is_monotonic_increasing:
-        raise ValueError(f"{panel_name}: index must be monotonic increasing")
-    if aligned.columns.has_duplicates:
-        duplicate_cols = aligned.columns[aligned.columns.duplicated()].unique().tolist()[:5]
-        raise ValueError(f"{panel_name}: duplicate ticker columns found (sample={duplicate_cols})")
-
-    object_cols = aligned.select_dtypes(include=["object"]).columns.tolist()
-    if object_cols:
-        raise TypeError(f"{panel_name}: object dtype columns are not allowed (sample={object_cols[:5]})")
-
-    aligned = aligned.reindex(index=dates, columns=tickers)
-    try:
-        aligned = aligned.astype(float)
-    except Exception as exc:  # pragma: no cover - defensive branch
-        raise TypeError(f"{panel_name}: cannot cast panel to float ({exc})") from exc
-
-    _debug_log(
-        f"{panel_name}: shape={aligned.shape[0]}x{aligned.shape[1]}, "
-        f"non_na={int(aligned.notna().sum().sum())}"
-    )
-    return aligned
 
 
 def _finalize_builder_outputs(
@@ -268,6 +209,160 @@ def _finalize_builder_outputs(
 
 
 # ============================================================================
+# SHARED PANEL HELPERS (USED BY FIVE-FACTOR ROTATION)
+# ============================================================================
+
+def _build_metric_panel(
+    metrics_df: pd.DataFrame,
+    metric_name: str,
+    dates: pd.DatetimeIndex,
+    tickers: pd.Index,
+) -> pd.DataFrame:
+    """Convert (ticker, date) metric series into a daily Date x Ticker panel."""
+    panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
+
+    if metrics_df.empty or metric_name not in metrics_df.columns:
+        return panel
+
+    available_tickers = set(metrics_df.index.get_level_values(0))
+    for ticker in tickers:
+        if ticker not in available_tickers:
+            continue
+        try:
+            series = metrics_df.loc[ticker, metric_name]
+            if isinstance(series, pd.DataFrame):
+                series = series.iloc[:, 0]
+            series = series.sort_index()
+            series = series[~series.index.duplicated(keep="last")]
+            series.index = pd.to_datetime(series.index)
+            panel[ticker] = apply_lag(series, dates)
+        except KeyError:
+            continue
+        except (ValueError, TypeError) as exc:
+            logger.info(f"    Warning: Could not process {metric_name} for {ticker}: {exc}")
+            continue
+
+    return panel
+
+
+def _calculate_margin_level_growth_for_ticker(
+    xlsx_path: Path | None,
+    ticker: str,
+    fundamentals_parquet: pd.DataFrame | None = None,
+) -> tuple[pd.Series | None, pd.Series | None]:
+    """Return profitability margin level and YoY margin growth series for one ticker."""
+    if fundamentals_parquet is not None:
+        inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
+        if inc.empty:
+            return None, None
+        rev_row = pick_row_from_sheet(inc, REVENUE_KEYS)
+        op_row = pick_row_from_sheet(inc, OPERATING_INCOME_KEYS)
+        gp_row = pick_row_from_sheet(inc, GROSS_PROFIT_KEYS)
+    else:
+        if xlsx_path is None:
+            return None, None
+        try:
+            inc = pd.read_excel(xlsx_path, sheet_name=INCOME_SHEET)
+        except Exception:
+            return None, None
+        rev_row = pick_row(inc, REVENUE_KEYS)
+        op_row = pick_row(inc, OPERATING_INCOME_KEYS)
+        gp_row = pick_row(inc, GROSS_PROFIT_KEYS)
+
+    if rev_row is None or op_row is None or gp_row is None:
+        return None, None
+
+    rev = coerce_quarter_cols(rev_row)
+    op = coerce_quarter_cols(op_row)
+    gp = coerce_quarter_cols(gp_row)
+    if rev.empty or op.empty or gp.empty:
+        return None, None
+
+    rev_ttm = sum_ttm(rev)
+    op_ttm = sum_ttm(op)
+    gp_ttm = sum_ttm(gp)
+    if rev_ttm.empty or op_ttm.empty or gp_ttm.empty:
+        return None, None
+
+    combined = pd.concat([rev_ttm, op_ttm, gp_ttm], axis=1, join="inner").dropna()
+    if combined.empty:
+        return None, None
+    combined.columns = ["RevenueTTM", "OperatingIncomeTTM", "GrossProfitTTM"]
+
+    revenue = combined["RevenueTTM"].replace(0.0, np.nan)
+    op_margin = combined["OperatingIncomeTTM"] / revenue
+    gp_margin = combined["GrossProfitTTM"] / revenue
+    op_margin_weight = 0.60
+    gp_margin_weight = 0.40
+    margin_level = (
+        op_margin_weight * op_margin + gp_margin_weight * gp_margin
+    ).replace([np.inf, -np.inf], np.nan).dropna()
+    if margin_level.empty:
+        return None, None
+
+    margin_growth = margin_level.diff(4).replace([np.inf, -np.inf], np.nan).dropna()
+    return margin_level.sort_index(), margin_growth.sort_index() if not margin_growth.empty else None
+
+
+def _build_profitability_margin_panels(
+    fundamentals: Dict,
+    dates: pd.DatetimeIndex,
+    data_loader,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build lagged margin-level and margin-growth panels."""
+    fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
+    level_panel: Dict[str, pd.Series] = {}
+    growth_panel: Dict[str, pd.Series] = {}
+
+    count = 0
+    for ticker, fund_data in fundamentals.items():
+        xlsx_path = fund_data.get("path") if isinstance(fund_data, dict) else None
+        margin_level, margin_growth = _calculate_margin_level_growth_for_ticker(
+            xlsx_path=xlsx_path,
+            ticker=ticker,
+            fundamentals_parquet=fundamentals_parquet,
+        )
+
+        if margin_level is not None and not margin_level.empty:
+            lagged_level = apply_lag(margin_level, dates)
+            if not lagged_level.empty:
+                level_panel[ticker] = lagged_level
+
+        if margin_growth is not None and not margin_growth.empty:
+            lagged_growth = apply_lag(margin_growth, dates)
+            if not lagged_growth.empty:
+                growth_panel[ticker] = lagged_growth
+
+        count += 1
+        if count % 100 == 0:
+            logger.info(f"  Profitability margin progress: {count}/{len(fundamentals)}")
+
+    level_df = pd.DataFrame(level_panel, index=dates)
+    growth_df = pd.DataFrame(growth_panel, index=dates)
+    return level_df, growth_df
+
+
+def _build_value_level_growth_panels(
+    fundamentals: Dict,
+    close: pd.DataFrame,
+    dates: pd.DatetimeIndex,
+    tickers: pd.Index,
+    data_loader,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build value level and lagged YoY value-growth panels."""
+    level_df = build_value_signals(
+        fundamentals,
+        close,
+        dates,
+        data_loader,
+    ).reindex(index=dates, columns=tickers)
+
+    growth_df = level_df.diff(VALUE_GROWTH_LOOKBACK_DAYS)
+    growth_df = growth_df.replace([np.inf, -np.inf], np.nan)
+    return level_df, growth_df
+
+
+# ============================================================================
 # QUALITY FACTOR PANELS
 # ============================================================================
 
@@ -281,10 +376,11 @@ def build_quality_panels(
     """
     Build Quality factor panels: ROE, ROA, Accruals, Piotroski F-score.
     """
-    del close, fundamentals  # Unused in current implementation.
+    del close
+    fundamentals = fundamentals or {}
     dates, tickers = _validate_reference_axes(dates, tickers, "build_quality_panels")
 
-    print("  Building quality factor panels...")
+    logger.info("  Building quality factor panels...")
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     roe_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
@@ -293,44 +389,48 @@ def build_quality_panels(
     piotroski_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
 
     if fundamentals_parquet is None:
-        print("    ⚠️  No fundamentals parquet - quality panels will be empty")
-        return _finalize_builder_outputs(
-            "build_quality_panels",
-            {
-            "quality_roe": roe_panel,
-            "quality_roa": roa_panel,
-            "quality_accruals": accruals_panel,
-            "quality_piotroski": piotroski_panel,
-            },
-            FACTOR_PANEL_CONTRACT["quality"],
-            dates,
-            tickers,
-        )
+        logger.warning("    ⚠️  No fundamentals parquet - falling back to per-ticker Excel files")
 
     count = 0
     success_count = 0
     for ticker in tickers:
         try:
-            # Get financial statements
-            inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
-            bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
-            cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+            use_parquet = fundamentals_parquet is not None
+            if use_parquet:
+                inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
+                bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
+                cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+            else:
+                fund_data = fundamentals.get(str(ticker), {}) if isinstance(fundamentals, dict) else {}
+                xlsx_path = fund_data.get("path") if isinstance(fund_data, dict) else None
+                if xlsx_path is None:
+                    continue
+                try:
+                    inc = pd.read_excel(xlsx_path, sheet_name=INCOME_SHEET)
+                    bs = pd.read_excel(xlsx_path, sheet_name=BALANCE_SHEET)
+                    try:
+                        cf = pd.read_excel(xlsx_path, sheet_name=CASH_FLOW_SHEET)
+                    except Exception:
+                        cf = pd.DataFrame()
+                except Exception:
+                    continue
 
             if inc.empty or bs.empty:
                 continue
 
             # Extract key rows
-            net_income_row = pick_row_from_sheet(inc, NET_INCOME_KEYS)
-            revenue_row = pick_row_from_sheet(inc, REVENUE_KEYS)
-            total_assets_row = pick_row_from_sheet(bs, TOTAL_ASSETS_KEYS)
-            total_equity_row = pick_row_from_sheet(bs, TOTAL_EQUITY_KEYS)
-            current_assets_row = pick_row_from_sheet(bs, CURRENT_ASSETS_KEYS)
-            current_liab_row = pick_row_from_sheet(bs, CURRENT_LIABILITIES_KEYS)
-            long_debt_row = pick_row_from_sheet(bs, LONG_TERM_DEBT_KEYS)
+            row_picker = pick_row_from_sheet if use_parquet else pick_row
+            net_income_row = row_picker(inc, NET_INCOME_KEYS)
+            revenue_row = row_picker(inc, REVENUE_KEYS)
+            total_assets_row = row_picker(bs, TOTAL_ASSETS_KEYS)
+            total_equity_row = row_picker(bs, TOTAL_EQUITY_KEYS)
+            current_assets_row = row_picker(bs, CURRENT_ASSETS_KEYS)
+            current_liab_row = row_picker(bs, CURRENT_LIABILITIES_KEYS)
+            long_debt_row = row_picker(bs, LONG_TERM_DEBT_KEYS)
 
             cfo_row = None
             if not cf.empty:
-                cfo_row = pick_row_from_sheet(cf, CFO_KEYS)
+                cfo_row = row_picker(cf, CFO_KEYS)
 
             ticker_has_data = False
 
@@ -459,9 +559,9 @@ def build_quality_panels(
 
         count += 1
         if count % 50 == 0:
-            print(f"    Quality progress: {count}/{len(tickers)} ({success_count} with data)")
+            logger.info(f"    Quality progress: {count}/{len(tickers)} ({success_count} with data)")
 
-    print(f"    Quality panels built: {success_count}/{len(tickers)} tickers with data")
+    logger.info(f"    Quality panels built: {success_count}/{len(tickers)} tickers with data")
 
     return _finalize_builder_outputs(
         "build_quality_panels",
@@ -491,10 +591,24 @@ def _load_shares_panel(
     if data_loader is None or not hasattr(data_loader, "load_shares_outstanding_panel"):
         return empty_panel, False
 
+    panel_cache = getattr(data_loader, "panel_cache", None)
+    cache_key = None
+    if panel_cache is not None:
+        cache_key = panel_cache.make_key(
+            "shares_outstanding_aligned",
+            start=dates[0] if len(dates) else None,
+            end=dates[-1] if len(dates) else None,
+            rows=int(len(dates)),
+            tickers=tuple(str(t) for t in tickers),
+        )
+        cached_panel = panel_cache.get(cache_key)
+        if isinstance(cached_panel, pd.DataFrame):
+            return cached_panel, True
+
     try:
         shares_outstanding = data_loader.load_shares_outstanding_panel()
     except Exception as exc:
-        print(f"    ⚠️  Failed to load shares outstanding panel: {exc}")
+        logger.warning(f"    ⚠️  Failed to load shares outstanding panel: {exc}")
         return empty_panel, False
 
     if shares_outstanding is None or shares_outstanding.empty:
@@ -505,6 +619,8 @@ def _load_shares_panel(
     shares = shares.sort_index()
     shares.columns = pd.Index([str(c).upper() for c in shares.columns])
     aligned = _align_numeric_panel(shares, "shares_outstanding", dates, tickers).ffill()
+    if panel_cache is not None and cache_key is not None:
+        panel_cache.set(cache_key, aligned)
     return aligned, True
 
 
@@ -524,7 +640,7 @@ def build_liquidity_panels(
     dates, tickers = _validate_reference_axes(dates, tickers, "build_liquidity_panels")
     close = _align_numeric_panel(close, "close", dates, tickers)
 
-    print("  Building liquidity factor panels...")
+    logger.info("  Building liquidity factor panels...")
 
     daily_returns = close.pct_change().abs()
     volume = _align_numeric_panel(volume_df, "volume_df", dates, tickers)
@@ -546,16 +662,16 @@ def build_liquidity_panels(
         # Smooth with 63-day rolling mean
         turnover_panel = real_turnover.rolling(TURNOVER_LOOKBACK_DAYS, min_periods=21).mean()
         turnover_panel = turnover_panel.replace([np.inf, -np.inf], np.nan)
-        print(f"    Real turnover computed using shares outstanding")
+        logger.info("    Real turnover computed using shares outstanding")
     else:
-        print(f"    ⚠️  Shares outstanding not available - turnover panel will be empty")
+        logger.warning("    ⚠️  Shares outstanding not available - turnover panel will be empty")
 
     # Bid-ask spread proxy: high-low range relative to close
     # This captures the spread cost component of liquidity
     # Note: requires high/low data which may not be in close df
     spread_proxy_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
 
-    print(f"    Liquidity panels: Amihud {amihud_panel.notna().sum().sum()}, "
+    logger.info(f"    Liquidity panels: Amihud {amihud_panel.notna().sum().sum()}, "
           f"Turnover {turnover_panel.notna().sum().sum()} data points")
 
     return _finalize_builder_outputs(
@@ -597,7 +713,7 @@ def build_trading_intensity_panels(
     dates, tickers = _validate_reference_axes(dates, tickers, "build_trading_intensity_panels")
     del close  # Not needed for this panel family.
 
-    print("  Building trading intensity panels...")
+    logger.info("  Building trading intensity panels...")
 
     volume = _align_numeric_panel(volume_df, "volume_df", dates, tickers)
 
@@ -626,11 +742,11 @@ def build_trading_intensity_panels(
         # Smooth and annualize (252 trading days)
         turnover_velocity = daily_turnover.rolling(21, min_periods=10).mean() * 252
         turnover_velocity = turnover_velocity.replace([np.inf, -np.inf], np.nan)
-        print(f"    Turnover velocity computed using shares outstanding")
+        logger.info("    Turnover velocity computed using shares outstanding")
     else:
-        print(f"    ⚠️  Shares outstanding not available - turnover velocity will be empty")
+        logger.warning("    ⚠️  Shares outstanding not available - turnover velocity will be empty")
 
-    print(f"    Trading intensity panels: RelVol {relative_volume.notna().sum().sum()}, "
+    logger.info(f"    Trading intensity panels: RelVol {relative_volume.notna().sum().sum()}, "
           f"VolTrend {volume_trend.notna().sum().sum()}, "
           f"TurnoverVel {turnover_velocity.notna().sum().sum()} data points")
 
@@ -662,7 +778,7 @@ def build_sentiment_panels(
     dates, tickers = _validate_reference_axes(dates, tickers, "build_sentiment_panels")
     close = _align_numeric_panel(close, "close", dates, tickers)
 
-    print("  Building sentiment/price action panels...")
+    logger.info("  Building sentiment/price action panels...")
 
     # 52-week high proximity: current price / 52-week high
     rolling_high = close.rolling(252, min_periods=126).max()
@@ -677,7 +793,7 @@ def build_sentiment_panels(
     # Short-term reversal: negative of very short-term return (mean reversion)
     reversal = -close.pct_change(REVERSAL_LOOKBACK_DAYS)
 
-    print(f"    Sentiment panels: 52wHigh {high_proximity.notna().sum().sum()}, "
+    logger.info(f"    Sentiment panels: 52wHigh {high_proximity.notna().sum().sum()}, "
           f"Accel {price_acceleration.notna().sum().sum()}, "
           f"Reversal {reversal.notna().sum().sum()} data points")
 
@@ -710,14 +826,14 @@ def build_fundamental_momentum_panels(
     del fundamentals  # Unused in current implementation.
     dates, tickers = _validate_reference_axes(dates, tickers, "build_fundamental_momentum_panels")
 
-    print("  Building fundamental momentum panels...")
+    logger.info("  Building fundamental momentum panels...")
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     margin_change_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
     sales_accel_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
 
     if fundamentals_parquet is None:
-        print("    ⚠️  No fundamentals parquet - fundmom panels will be empty")
+        logger.warning("    ⚠️  No fundamentals parquet - fundmom panels will be empty")
         return _finalize_builder_outputs(
             "build_fundamental_momentum_panels",
             {
@@ -773,9 +889,9 @@ def build_fundamental_momentum_panels(
 
         count += 1
         if count % 50 == 0:
-            print(f"    FundMom progress: {count}/{len(tickers)} ({success_count} with data)")
+            logger.info(f"    FundMom progress: {count}/{len(tickers)} ({success_count} with data)")
 
-    print(f"    FundMom panels built: {success_count}/{len(tickers)} tickers with data")
+    logger.info(f"    FundMom panels built: {success_count}/{len(tickers)} tickers with data")
 
     return _finalize_builder_outputs(
         "build_fundamental_momentum_panels",
@@ -809,7 +925,7 @@ def build_carry_panels(
     dates, tickers = _validate_reference_axes(dates, tickers, "build_carry_panels")
     close = _align_numeric_panel(close, "close", dates, tickers)
 
-    print("  Building carry factor panels...")
+    logger.info("  Building carry factor panels...")
 
     div_yield_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
 
@@ -817,7 +933,7 @@ def build_carry_panels(
     try:
         metrics_df = data_loader.load_fundamental_metrics()
         if not metrics_df.empty and "dividend_yield" in metrics_df.columns:
-            print("    Loading dividend yield from fundamental metrics...")
+            logger.info("    Loading dividend yield from fundamental metrics...")
             available_tickers = set(metrics_df.index.get_level_values(0))
             for ticker in tickers:
                 if ticker not in available_tickers:
@@ -833,12 +949,12 @@ def build_carry_panels(
                 except Exception:
                     continue
     except Exception as e:
-        print(f"    ⚠️  Could not load dividend metrics: {e}")
+        logger.warning(f"    ⚠️  Could not load dividend metrics: {e}")
 
     # If we got data from metrics, we're done
     metrics_count = div_yield_panel.notna().sum().sum()
     if metrics_count > 1000:
-        print(f"    Carry panels from metrics: {metrics_count} data points")
+        logger.info(f"    Carry panels from metrics: {metrics_count} data points")
         return _finalize_builder_outputs(
             "build_carry_panels",
             {
@@ -851,11 +967,11 @@ def build_carry_panels(
         )
 
     # Otherwise try to build from cash flow statements
-    print("    Building dividend yield from cash flow statements + shares outstanding...")
+    logger.info("    Building dividend yield from cash flow statements + shares outstanding...")
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     if fundamentals_parquet is None:
-        print("    ⚠️  No fundamentals parquet - carry panels will be empty")
+        logger.warning("    ⚠️  No fundamentals parquet - carry panels will be empty")
         return _finalize_builder_outputs(
             "build_carry_panels",
             {
@@ -934,9 +1050,9 @@ def build_carry_panels(
 
         count += 1
         if count % 50 == 0:
-            print(f"    Carry progress: {count}/{len(tickers)} ({success_count} with data)")
+            logger.info(f"    Carry progress: {count}/{len(tickers)} ({success_count} with data)")
 
-    print(f"    Carry panels built: {success_count}/{len(tickers)} tickers with data")
+    logger.info(f"    Carry panels built: {success_count}/{len(tickers)} tickers with data")
 
     return _finalize_builder_outputs(
         "build_carry_panels",
@@ -968,7 +1084,7 @@ def build_defensive_panels(
     dates, tickers = _validate_reference_axes(dates, tickers, "build_defensive_panels")
     close = _align_numeric_panel(close, "close", dates, tickers)
 
-    print("  Building defensive factor panels...")
+    logger.info("  Building defensive factor panels...")
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     stability_panel = pd.DataFrame(np.nan, index=dates, columns=tickers, dtype=float)
@@ -1008,9 +1124,9 @@ def build_defensive_panels(
 
             count += 1
             if count % 50 == 0:
-                print(f"    Defensive progress: {count}/{len(tickers)} ({success_count} with data)")
+                logger.info(f"    Defensive progress: {count}/{len(tickers)} ({success_count} with data)")
 
-        print(f"    Earnings stability built: {success_count}/{len(tickers)} tickers with data")
+        logger.info(f"    Earnings stability built: {success_count}/{len(tickers)} tickers with data")
 
     # Beta to market
     beta_panel = build_market_beta_panel(close, dates, data_loader)
@@ -1089,10 +1205,10 @@ def build_volatility_beta_panels(
     dates, tickers = _validate_reference_axes(dates, close.columns, "build_volatility_beta_panels")
     close = _align_numeric_panel(close, "close", dates, tickers)
 
-    print("  Building volatility panel...")
+    logger.info("  Building volatility panel...")
     vol_panel = build_realized_volatility_panel(close, dates)
 
-    print("  Building market beta panel...")
+    logger.info("  Building market beta panel...")
     beta_panel = build_market_beta_panel(close, dates, data_loader)
 
     return vol_panel, beta_panel

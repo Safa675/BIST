@@ -9,16 +9,14 @@ Uses borsapy OBV indicator for volume-momentum signals:
 Signal: OBV momentum (rate of change over lookback period)
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from Models.signals.borsapy_indicators import BorsapyIndicators
 
-from signals.borsapy_indicators import BorsapyIndicators
-
-
+logger = logging.getLogger(__name__)
 def build_obv_signals(
     close_df: pd.DataFrame,
     volume_df: pd.DataFrame,
@@ -40,7 +38,7 @@ def build_obv_signals(
         DataFrame (dates x tickers) with OBV momentum scores
         Higher = stronger accumulation (bullish)
     """
-    print(f"\n🔧 Building OBV momentum({momentum_lookback}) signals...")
+    logger.info(f"\n🔧 Building OBV momentum({momentum_lookback}) signals...")
 
     obv_panel = BorsapyIndicators.build_obv_panel(close_df, volume_df)
 
@@ -56,7 +54,7 @@ def build_obv_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
 
-    print(f"  ✅ OBV signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ OBV signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
 
     return result

@@ -1,0 +1,89 @@
+site_name: BIST Quant
+site_description: Quantitative finance research and backtesting library for BIST
+site_url: https://OWNER.github.io/bist-quant/
+repo_url: https://github.com/OWNER/bist-quant
+repo_name: OWNER/bist-quant
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - Running Backtests: guide/backtests.md
+    - Signal Configuration: guide/signals.md
+    - Portfolio Engine: guide/portfolio-engine.md
+  - API Reference:
+    - Overview: api/index.md
+    - Common:
+      - Backtester: api/common/backtester.md
+      - Data Loader: api/common/data_loader.md
+      - Risk Manager: api/common/risk_manager.md
+      - Config Manager: api/common/config_manager.md
+    - Signals:
+      - Factory: api/signals/factory.md
+      - Protocol: api/signals/protocol.md
+      - Momentum: api/signals/momentum.md
+      - Value: api/signals/value.md
+      - Quality: api/signals/quality.md
+      - Technical: api/signals/technical.md
+      - Composite: api/signals/composite.md
+    - Portfolio Engine: api/portfolio_engine.md
+  - Examples:
+    - Quick Start: examples/quick-start.md
+    - Custom Strategy: examples/custom-strategy.md
+    - Factor Analysis: examples/factor-analysis.md
+  - Changelog: changelog.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_category_heading: true
+            members_order: source
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/OWNER/bist-quant

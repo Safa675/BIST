@@ -18,21 +18,24 @@ Where:
 Lower accruals = Higher quality earnings = Better signal score
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
+
+import numpy as np
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -195,9 +198,9 @@ def build_accrual_signals(
         DataFrame (dates x tickers) with accrual quality scores
         Higher score = Lower accruals = Better quality
     """
-    print("\n🔧 Building accrual quality signals...")
-    print("  Formula: BS_ACC = (ΔCA - ΔCash) - (ΔCL - ΔSTD - ΔITP) - Dep")
-    print("  Lower accruals = Higher quality earnings")
+    logger.info("\n🔧 Building accrual quality signals...")
+    logger.info("  Formula: BS_ACC = (ΔCA - ΔCash) - (ΔCL - ΔSTD - ΔITP) - Dep")
+    logger.info("  Lower accruals = Higher quality earnings")
     
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
     
@@ -219,7 +222,7 @@ def build_accrual_signals(
                 panel[ticker] = lagged
                 count += 1
                 if count % 50 == 0:
-                    print(f"  Processed {count} tickers...")
+                    logger.info(f"  Processed {count} tickers...")
     
     result = pd.DataFrame(panel, index=dates)
     
@@ -227,12 +230,15 @@ def build_accrual_signals(
     if not result.empty:
         latest = result.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
-            print(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
             
             # Show top 5 quality stocks (highest scores = lowest accruals)
             top_5 = latest.nlargest(5)
-            print(f"  Top 5 quality stocks (lowest accruals): {', '.join(top_5.index.tolist())}")
+            logger.info(f"  Top 5 quality stocks (lowest accruals): {', '.join(top_5.index.tolist())}")
     
-    print(f"  ✅ Accrual signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    # Apply staleness-based down-weighting
+    result = apply_staleness_weighting(result)
+
+    logger.info(f"  ✅ Accrual signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

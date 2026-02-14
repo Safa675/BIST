@@ -1,6 +1,8 @@
+import logging
 import os
 import yfinance as yf
 import pandas as pd
+logger = logging.getLogger(__name__)
 
 start = "2013-01-01"
 end   = "2026-02-01"
@@ -14,9 +16,9 @@ def safe_download(ticker):
 # --- Gold ---
 try:
     xau = safe_download("XAUUSD=X")
-    print("Using XAUUSD=X (spot)")
+    logger.info("Using XAUUSD=X (spot)")
 except Exception:
-    print("XAUUSD=X failed, falling back to GC=F (gold futures)")
+    logger.info("XAUUSD=X failed, falling back to GC=F (gold futures)")
     xau = safe_download("GC=F")
 
 # --- USD/TRY ---
@@ -34,5 +36,5 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(script_dir, "xau_try_2013_2026.csv")
 df.to_csv(csv_path)
 
-print(f"Saved to {csv_path}")
-print(df.head())
+logger.info(f"Saved to {csv_path}")
+logger.info(df.head())

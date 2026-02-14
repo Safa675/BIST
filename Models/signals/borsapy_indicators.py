@@ -18,7 +18,6 @@ Available indicators:
 
 Usage:
     from Models.signals.borsapy_indicators import BorsapyIndicators
-
     # Build RSI panel for all tickers
     rsi_panel = BorsapyIndicators.build_rsi_panel(close_df, period=14)
 
@@ -31,18 +30,12 @@ Usage:
     )
 """
 
-from pathlib import Path
-from typing import Optional
-import sys
+import logging
 
 import numpy as np
 import pandas as pd
 
-# Add paths for imports
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-FETCHER_DIR = PROJECT_ROOT / "data" / "Fetcher-Scrapper"
-if str(FETCHER_DIR) not in sys.path:
-    sys.path.insert(0, str(FETCHER_DIR))
+logger = logging.getLogger(__name__)
 
 # Check borsapy availability
 try:
@@ -115,15 +108,15 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with RSI values
         """
-        print(f"\n📊 Building RSI({period}) panel...")
+        logger.info(f"\n📊 Building RSI({period}) panel...")
 
         rsi_panel = close_df.apply(
             lambda col: BorsapyIndicators.calculate_rsi(col, period=period)
         )
 
         valid_pct = rsi_panel.notna().mean().mean() * 100
-        print(f"  ✅ RSI panel: {rsi_panel.shape[0]} days × {rsi_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ RSI panel: {rsi_panel.shape[0]} days × {rsi_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return rsi_panel
 
@@ -191,7 +184,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with MACD component
         """
-        print(f"\n📊 Building MACD({fast},{slow},{signal}) panel [{output}]...")
+        logger.info(f"\n📊 Building MACD({fast},{slow},{signal}) panel [{output}]...")
 
         def get_macd_component(col):
             macd_df = BorsapyIndicators.calculate_macd(col, fast, slow, signal)
@@ -200,8 +193,8 @@ class BorsapyIndicators:
         macd_panel = close_df.apply(get_macd_component)
 
         valid_pct = macd_panel.notna().mean().mean() * 100
-        print(f"  ✅ MACD panel: {macd_panel.shape[0]} days × {macd_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ MACD panel: {macd_panel.shape[0]} days × {macd_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return macd_panel
 
@@ -261,7 +254,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with BB component
         """
-        print(f"\n📊 Building Bollinger({period}, {std_dev}) panel [{output}]...")
+        logger.info(f"\n📊 Building Bollinger({period}, {std_dev}) panel [{output}]...")
 
         def get_bb_component(col):
             bb_df = BorsapyIndicators.calculate_bollinger_bands(col, period, std_dev)
@@ -270,8 +263,8 @@ class BorsapyIndicators:
         bb_panel = close_df.apply(get_bb_component)
 
         valid_pct = bb_panel.notna().mean().mean() * 100
-        print(f"  ✅ Bollinger panel: {bb_panel.shape[0]} days × {bb_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ Bollinger panel: {bb_panel.shape[0]} days × {bb_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return bb_panel
 
@@ -328,7 +321,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with ATR values
         """
-        print(f"\n📊 Building ATR({period}) panel...")
+        logger.info(f"\n📊 Building ATR({period}) panel...")
 
         tickers = close_df.columns
         atr_data = {}
@@ -342,8 +335,8 @@ class BorsapyIndicators:
         atr_panel = pd.DataFrame(atr_data, index=close_df.index)
 
         valid_pct = atr_panel.notna().mean().mean() * 100
-        print(f"  ✅ ATR panel: {atr_panel.shape[0]} days × {atr_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ ATR panel: {atr_panel.shape[0]} days × {atr_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return atr_panel
 
@@ -403,7 +396,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with Stochastic values
         """
-        print(f"\n📊 Building Stochastic({k_period},{d_period}) panel [{output}]...")
+        logger.info(f"\n📊 Building Stochastic({k_period},{d_period}) panel [{output}]...")
 
         tickers = close_df.columns
         stoch_data = {}
@@ -419,8 +412,8 @@ class BorsapyIndicators:
         stoch_panel = pd.DataFrame(stoch_data, index=close_df.index)
 
         valid_pct = stoch_panel.notna().mean().mean() * 100
-        print(f"  ✅ Stochastic panel: {stoch_panel.shape[0]} days × {stoch_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ Stochastic panel: {stoch_panel.shape[0]} days × {stoch_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return stoch_panel
 
@@ -498,7 +491,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with ADX values
         """
-        print(f"\n📊 Building ADX({period}) panel [{output}]...")
+        logger.info(f"\n📊 Building ADX({period}) panel [{output}]...")
 
         tickers = close_df.columns
         adx_data = {}
@@ -513,8 +506,8 @@ class BorsapyIndicators:
         adx_panel = pd.DataFrame(adx_data, index=close_df.index)
 
         valid_pct = adx_panel.notna().mean().mean() * 100
-        print(f"  ✅ ADX panel: {adx_panel.shape[0]} days × {adx_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ ADX panel: {adx_panel.shape[0]} days × {adx_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return adx_panel
 
@@ -598,7 +591,7 @@ class BorsapyIndicators:
         Returns:
             DataFrame (Date x Ticker) with Supertrend values
         """
-        print(f"\n📊 Building Supertrend({period}, {multiplier}) panel [{output}]...")
+        logger.info(f"\n📊 Building Supertrend({period}, {multiplier}) panel [{output}]...")
 
         tickers = close_df.columns
         st_data = {}
@@ -614,8 +607,8 @@ class BorsapyIndicators:
         st_panel = pd.DataFrame(st_data, index=close_df.index)
 
         valid_pct = st_panel.notna().mean().mean() * 100
-        print(f"  ✅ Supertrend panel: {st_panel.shape[0]} days × {st_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ Supertrend panel: {st_panel.shape[0]} days × {st_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
 
         return st_panel
 
@@ -647,7 +640,7 @@ class BorsapyIndicators:
             DataFrame with OHLCV + indicator columns
         """
         if not BORSAPY_AVAILABLE:
-            print("  ⚠️  Borsapy not available")
+            logger.warning("  ⚠️  Borsapy not available")
             return pd.DataFrame()
 
         try:
@@ -659,7 +652,7 @@ class BorsapyIndicators:
             else:
                 return ticker.history_with_indicators(period=period, interval=interval)
         except Exception as e:
-            print(f"  ⚠️  Failed to fetch indicators for {symbol}: {e}")
+            logger.warning(f"  ⚠️  Failed to fetch indicators for {symbol}: {e}")
             return pd.DataFrame()
 
     @staticmethod
@@ -680,10 +673,10 @@ class BorsapyIndicators:
             Dict mapping symbol -> DataFrame with indicators
         """
         if not BORSAPY_AVAILABLE:
-            print("  ⚠️  Borsapy not available")
+            logger.warning("  ⚠️  Borsapy not available")
             return {}
 
-        print(f"\n📊 Fetching indicators for {len(symbols)} tickers...")
+        logger.info(f"\n📊 Fetching indicators for {len(symbols)} tickers...")
 
         results = {}
         for i, symbol in enumerate(symbols):
@@ -697,9 +690,9 @@ class BorsapyIndicators:
                 continue
 
             if (i + 1) % 20 == 0:
-                print(f"  Processed {i + 1}/{len(symbols)} tickers...")
+                logger.info(f"  Processed {i + 1}/{len(symbols)} tickers...")
 
-        print(f"  ✅ Fetched indicators for {len(results)} tickers")
+        logger.info(f"  ✅ Fetched indicators for {len(results)} tickers")
         return results
 
 
@@ -721,13 +714,13 @@ class BorsapyIndicators:
         period: int = 20,
     ) -> pd.DataFrame:
         """Build EMA panel for all tickers."""
-        print(f"\n📊 Building EMA({period}) panel...")
+        logger.info(f"\n📊 Building EMA({period}) panel...")
         ema_panel = close_df.apply(
             lambda col: BorsapyIndicators.calculate_ema(col, period=period)
         )
         valid_pct = ema_panel.notna().mean().mean() * 100
-        print(f"  ✅ EMA panel: {ema_panel.shape[0]} days × {ema_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ EMA panel: {ema_panel.shape[0]} days × {ema_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
         return ema_panel
 
     # -------------------------------------------------------------------------
@@ -750,7 +743,7 @@ class BorsapyIndicators:
         volume_df: pd.DataFrame,
     ) -> pd.DataFrame:
         """Build OBV panel for all tickers."""
-        print(f"\n📊 Building OBV panel...")
+        logger.info("\n📊 Building OBV panel...")
         tickers = close_df.columns
         obv_data = {}
         for ticker in tickers:
@@ -760,8 +753,8 @@ class BorsapyIndicators:
                 )
         obv_panel = pd.DataFrame(obv_data, index=close_df.index)
         valid_pct = obv_panel.notna().mean().mean() * 100
-        print(f"  ✅ OBV panel: {obv_panel.shape[0]} days × {obv_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ OBV panel: {obv_panel.shape[0]} days × {obv_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
         return obv_panel
 
     # -------------------------------------------------------------------------
@@ -791,7 +784,7 @@ class BorsapyIndicators:
         period: int = 20,
     ) -> pd.DataFrame:
         """Build VWAP panel for all tickers."""
-        print(f"\n📊 Building VWAP({period}) panel...")
+        logger.info(f"\n📊 Building VWAP({period}) panel...")
         tickers = close_df.columns
         vwap_data = {}
         for ticker in tickers:
@@ -802,8 +795,8 @@ class BorsapyIndicators:
                 )
         vwap_panel = pd.DataFrame(vwap_data, index=close_df.index)
         valid_pct = vwap_panel.notna().mean().mean() * 100
-        print(f"  ✅ VWAP panel: {vwap_panel.shape[0]} days × {vwap_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ VWAP panel: {vwap_panel.shape[0]} days × {vwap_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
         return vwap_panel
 
     # -------------------------------------------------------------------------
@@ -920,6 +913,24 @@ class BorsapyIndicators:
     # -------------------------------------------------------------------------
 
     @staticmethod
+    def _rolling_mean_abs_deviation(series: pd.Series, period: int) -> pd.Series:
+        """Vectorized rolling mean absolute deviation with full-window validity."""
+        values = series.to_numpy(dtype=np.float64, copy=False)
+        result = np.full(values.shape[0], np.nan, dtype=np.float64)
+        if period <= 0 or values.shape[0] < period:
+            return pd.Series(result, index=series.index, dtype=float)
+
+        windows = np.lib.stride_tricks.sliding_window_view(values, window_shape=period)
+        valid_mask = ~np.isnan(windows).any(axis=1)
+        if valid_mask.any():
+            valid_windows = windows[valid_mask]
+            means = valid_windows.mean(axis=1)
+            mad = np.abs(valid_windows - means[:, None]).mean(axis=1)
+            target = result[period - 1 :]
+            target[valid_mask] = mad
+        return pd.Series(result, index=series.index, dtype=float)
+
+    @staticmethod
     def calculate_cci(
         high: pd.Series,
         low: pd.Series,
@@ -929,9 +940,7 @@ class BorsapyIndicators:
         """Calculate CCI for a single ticker."""
         typical_price = (high + low + close) / 3
         sma_tp = typical_price.rolling(period).mean()
-        mean_dev = typical_price.rolling(period).apply(
-            lambda x: np.mean(np.abs(x - x.mean())), raw=True
-        )
+        mean_dev = BorsapyIndicators._rolling_mean_abs_deviation(typical_price, period)
         cci = (typical_price - sma_tp) / (0.015 * mean_dev.replace(0, np.nan))
         return cci
 
@@ -943,7 +952,7 @@ class BorsapyIndicators:
         period: int = 20,
     ) -> pd.DataFrame:
         """Build CCI panel for all tickers."""
-        print(f"\n📊 Building CCI({period}) panel...")
+        logger.info(f"\n📊 Building CCI({period}) panel...")
         tickers = close_df.columns
         cci_data = {}
         for ticker in tickers:
@@ -953,8 +962,8 @@ class BorsapyIndicators:
                 )
         cci_panel = pd.DataFrame(cci_data, index=close_df.index)
         valid_pct = cci_panel.notna().mean().mean() * 100
-        print(f"  ✅ CCI panel: {cci_panel.shape[0]} days × {cci_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ CCI panel: {cci_panel.shape[0]} days × {cci_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
         return cci_panel
 
     # -------------------------------------------------------------------------
@@ -994,7 +1003,7 @@ class BorsapyIndicators:
         period: int = 14,
     ) -> pd.DataFrame:
         """Build MFI panel for all tickers."""
-        print(f"\n📊 Building MFI({period}) panel...")
+        logger.info(f"\n📊 Building MFI({period}) panel...")
         tickers = close_df.columns
         mfi_data = {}
         for ticker in tickers:
@@ -1005,8 +1014,8 @@ class BorsapyIndicators:
                 )
         mfi_panel = pd.DataFrame(mfi_data, index=close_df.index)
         valid_pct = mfi_panel.notna().mean().mean() * 100
-        print(f"  ✅ MFI panel: {mfi_panel.shape[0]} days × {mfi_panel.shape[1]} tickers")
-        print(f"     Coverage: {valid_pct:.1f}%")
+        logger.info(f"  ✅ MFI panel: {mfi_panel.shape[0]} days × {mfi_panel.shape[1]} tickers")
+        logger.info(f"     Coverage: {valid_pct:.1f}%")
         return mfi_panel
 
 

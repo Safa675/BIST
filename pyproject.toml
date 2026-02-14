@@ -1,0 +1,193 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bist-quant"
+version = "0.1.0"
+description = "BIST quantitative finance research and backtesting library"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = {text = "Proprietary"}
+authors = [{name = "BIST Quant Team"}]
+keywords = ["quant", "finance", "backtesting", "bist", "factor-investing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial :: Investment",
+  "Typing :: Typed",
+]
+dependencies = [
+  "numpy>=1.24,<3",
+  "pandas>=2.0,<3",
+  "pyarrow>=14,<21",
+  "openpyxl>=3.1,<4",
+  "scipy>=1.10,<2",
+  "PyYAML>=6.0,<7",
+  "requests>=2.31,<3",
+  "httpx>=0.26,<1",
+  "yfinance>=0.2.40,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/OWNER/bist-quant"
+Repository = "https://github.com/OWNER/bist-quant.git"
+Documentation = "https://OWNER.github.io/bist-quant/"
+Changelog = "https://github.com/OWNER/bist-quant/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+data-quality = [
+  "pandera>=0.20,<1",
+]
+fetchers = [
+  "borsapy>=0.1",
+  "evds>=0.3",
+  "isyatirimhisse>=0.4",
+  "playwright>=1.46,<2",
+]
+docs = [
+  "mkdocs>=1.6,<2",
+  "mkdocstrings[python]>=0.26,<1",
+  "mkdocs-material>=9.5,<10",
+]
+dev = [
+  "pytest>=8.2,<9",
+  "pytest-cov>=5,<7",
+  "hypothesis>=6.112,<7",
+  "ruff>=0.5.7,<1",
+  "mypy>=1.11,<2",
+  "types-PyYAML>=6.0.12",
+  "types-requests>=2.32.0.20241016",
+  "pre-commit>=3.7,<5",
+  "pip-audit>=2.7,<3",
+  "build>=1.2,<2",
+  # Include docs dependencies in dev
+  "mkdocs>=1.6,<2",
+  "mkdocstrings[python]>=0.26,<1",
+  "mkdocs-material>=9.5,<10",
+]
+
+[project.scripts]
+bist-backtest = "run_backtest:main"
+bist-portfolio-engine = "Models.portfolio_engine:main"
+bist-debug-backtester = "Models.debug_backtester:main"
+bist-benchmark = "Models.common.benchmarking_cli:main"
+
+[tool.setuptools]
+include-package-data = true
+py-modules = ["run_backtest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["Models*", "common*", "signals*"]
+exclude = ["data*", "scripts*", "regime_filter*", "tests*"]
+
+[tool.setuptools.package-data]
+Models = ["py.typed", "configs/*.yaml"]
+
+# =============================================================================
+# pytest configuration (migrated from pytest.ini)
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore::FutureWarning:Models.signals.*",
+]
+
+# =============================================================================
+# mypy configuration (migrated from mypy.ini)
+# =============================================================================
+[tool.mypy]
+python_version = "3.10"
+strict = false
+show_error_codes = true
+pretty = true
+warn_unreachable = true
+ignore_missing_imports = true
+follow_imports = "silent"
+exclude = '''(?x)(
+  ^data/
+  | ^Models/results/
+  | ^regime_filter/
+)'''
+files = [
+  "Models/common/*.py",
+  "Models/signals/factory.py",
+  "Models/signals/protocol.py",
+  "Models/__init__.py",
+  "Models/signals/__init__.py",
+]
+
+[[tool.mypy.overrides]]
+module = "Models.portfolio_engine"
+strict = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.*"
+strict = false
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "Models.signals.*"
+strict = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.borsapy_adapter"
+strict = true
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.macro_adapter"
+strict = true
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.portfolio_analytics"
+strict = true
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.market_cap_utils"
+strict = true
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "Models.common.enums"
+strict = true
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "Models.signals.factory"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "Models.signals.protocol"
+strict = true
+
+# =============================================================================
+# ruff configuration (migrated from .ruff.toml)
+# =============================================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["Models", "tests", "."]
+extend-exclude = [
+  "Models/results",
+  "data",
+  "__pycache__",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]

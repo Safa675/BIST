@@ -11,20 +11,24 @@ Based on Quantpedia strategy: Combining Fundamental F-Score and Equity Short-Ter
 Signal: Composite of F-Score rank and negative monthly return
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-from typing import Dict, Optional
-import sys
+from typing import Dict
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    coerce_quarter_cols,
-    sum_ttm,
-    get_consolidated_sheet,
-    pick_row_from_sheet,
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
+    get_consolidated_sheet,
+    pick_row,
+    pick_row_from_sheet,
+    sum_ttm,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -85,6 +89,7 @@ def calculate_fscore_for_ticker(
     ticker: str,
     data_loader,
     fundamentals_parquet: pd.DataFrame = None,
+    xlsx_path: Path | None = None,
 ) -> pd.Series:
     """
     Calculate Piotroski F-Score (0-9) for a ticker.
@@ -103,26 +108,45 @@ def calculate_fscore_for_ticker(
     Returns:
         pd.Series: F-Score indexed by quarter
     """
-    if fundamentals_parquet is None:
-        return pd.Series(dtype=float)
+    del data_loader  # Kept for backward-compatible signature.
 
-    inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
-    bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
-    cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+    use_parquet = fundamentals_parquet is not None
+    if use_parquet:
+        inc = get_consolidated_sheet(fundamentals_parquet, ticker, INCOME_SHEET)
+        bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
+        cf = get_consolidated_sheet(fundamentals_parquet, ticker, CASH_FLOW_SHEET)
+    else:
+        inc = pd.DataFrame()
+        bs = pd.DataFrame()
+        cf = pd.DataFrame()
+
+    if inc.empty and bs.empty and xlsx_path is not None:
+        try:
+            inc = pd.read_excel(xlsx_path, sheet_name=INCOME_SHEET)
+            bs = pd.read_excel(xlsx_path, sheet_name=BALANCE_SHEET)
+            try:
+                cf = pd.read_excel(xlsx_path, sheet_name=CASH_FLOW_SHEET)
+            except Exception:
+                cf = pd.DataFrame()
+            use_parquet = False
+        except Exception:
+            return pd.Series(dtype=float)
 
     if inc.empty and bs.empty:
         return pd.Series(dtype=float)
 
+    row_picker = pick_row_from_sheet if use_parquet else pick_row
+
     # Extract rows
-    net_income_row = pick_row_from_sheet(inc, NET_INCOME_KEYS)
-    opcf_row = pick_row_from_sheet(cf, OPERATING_CF_KEYS) if not cf.empty else None
-    assets_row = pick_row_from_sheet(bs, TOTAL_ASSETS_KEYS)
-    lt_debt_row = pick_row_from_sheet(bs, LONG_TERM_DEBT_KEYS)
-    curr_assets_row = pick_row_from_sheet(bs, CURRENT_ASSETS_KEYS)
-    curr_liab_row = pick_row_from_sheet(bs, CURRENT_LIABILITIES_KEYS)
-    revenue_row = pick_row_from_sheet(inc, REVENUE_KEYS)
-    gross_profit_row = pick_row_from_sheet(inc, GROSS_PROFIT_KEYS)
-    shares_row = pick_row_from_sheet(bs, SHARES_OUTSTANDING_KEYS)
+    net_income_row = row_picker(inc, NET_INCOME_KEYS)
+    opcf_row = row_picker(cf, OPERATING_CF_KEYS) if not cf.empty else None
+    assets_row = row_picker(bs, TOTAL_ASSETS_KEYS)
+    lt_debt_row = row_picker(bs, LONG_TERM_DEBT_KEYS)
+    curr_assets_row = row_picker(bs, CURRENT_ASSETS_KEYS)
+    curr_liab_row = row_picker(bs, CURRENT_LIABILITIES_KEYS)
+    revenue_row = row_picker(inc, REVENUE_KEYS)
+    gross_profit_row = row_picker(inc, GROSS_PROFIT_KEYS)
+    shares_row = row_picker(bs, SHARES_OUTSTANDING_KEYS)
 
     # Coerce to series
     net_income = coerce_quarter_cols(net_income_row) if net_income_row is not None else pd.Series(dtype=float)
@@ -230,12 +254,12 @@ def build_fscore_reversal_signals(
     Returns:
         DataFrame (dates x tickers) with combined scores
     """
-    print("\n🔧 Building F-Score + Reversal signals...")
-    print(f"  Reversal Lookback: {REVERSAL_LOOKBACK} days")
-    print(f"  F-Score High Threshold: >= {FSCORE_HIGH_THRESHOLD}")
-    print(f"  F-Score Low Threshold: <= {FSCORE_LOW_THRESHOLD}")
+    logger.info("\n🔧 Building F-Score + Reversal signals...")
+    logger.info(f"  Reversal Lookback: {REVERSAL_LOOKBACK} days")
+    logger.info(f"  F-Score High Threshold: >= {FSCORE_HIGH_THRESHOLD}")
+    logger.info(f"  F-Score Low Threshold: <= {FSCORE_LOW_THRESHOLD}")
 
-    fundamentals_parquet = data_loader.load_fundamentals_parquet()
+    fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     # Calculate F-Scores for all tickers
     fscore_panel = {}
@@ -245,7 +269,14 @@ def build_fscore_reversal_signals(
         if ticker not in close_df.columns:
             continue
 
-        fscore = calculate_fscore_for_ticker(ticker, data_loader, fundamentals_parquet)
+        fund_data = fundamentals.get(ticker, {}) if isinstance(fundamentals, dict) else {}
+        xlsx_path = fund_data.get("path") if isinstance(fund_data, dict) else None
+        fscore = calculate_fscore_for_ticker(
+            ticker,
+            data_loader,
+            fundamentals_parquet,
+            xlsx_path=xlsx_path,
+        )
         if not fscore.empty:
             # Apply lag and align to daily dates
             lagged = apply_lag(fscore, dates)
@@ -254,7 +285,7 @@ def build_fscore_reversal_signals(
 
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers...")
+            logger.info(f"  Processed {count} tickers...")
 
     # Build F-Score DataFrame
     fscore_df = pd.DataFrame(fscore_panel, index=dates)
@@ -267,7 +298,7 @@ def build_fscore_reversal_signals(
     reversal_df = reversal_score.reindex(dates)
 
     # Cross-sectional z-score normalization
-    print("  Normalizing F-Score and reversal (z-score per date)...")
+    logger.info("  Normalizing F-Score and reversal (z-score per date)...")
 
     def zscore_df(df):
         row_mean = df.mean(axis=1)
@@ -279,7 +310,7 @@ def build_fscore_reversal_signals(
 
     # Combined score: average of F-Score and reversal z-scores
     # High F-Score + High Reversal (loser) = Best
-    print("  Combining F-Score and reversal signals...")
+    logger.info("  Combining F-Score and reversal signals...")
     combined = pd.DataFrame(index=dates, columns=close_df.columns, dtype=float)
 
     for ticker in close_df.columns:
@@ -290,6 +321,10 @@ def build_fscore_reversal_signals(
             combined[ticker] = reversal_z[ticker] * 0.5
 
     result = combined.replace([np.inf, -np.inf], np.nan)
-    print(f"  ✅ F-Score + Reversal signals: {result.shape[0]} days × {result.shape[1]} tickers")
+
+    # Apply staleness-based down-weighting
+    result = apply_staleness_weighting(result)
+
+    logger.info(f"  ✅ F-Score + Reversal signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

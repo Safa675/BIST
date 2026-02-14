@@ -10,15 +10,13 @@ Based on Quantpedia strategy: Residual Momentum Factor
 Signal: 12-month residual returns / residual volatility
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-from typing import Optional
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import numpy as np
+import pandas as pd
 
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # RESIDUAL MOMENTUM PARAMETERS
 # ============================================================================
@@ -116,8 +114,8 @@ def calculate_residual_momentum_scores(
         pd.DataFrame: Residual momentum scores (dates x tickers)
     """
     # Calculate returns
-    stock_returns = close_df.pct_change(fill_method=None)
-    market_returns = market_close.pct_change(fill_method=None)
+    stock_returns = close_df.pct_change()
+    market_returns = market_close.pct_change()
 
     # Calculate rolling betas
     betas = calculate_rolling_beta(stock_returns, market_returns, lookback)
@@ -170,10 +168,10 @@ def build_residual_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with residual momentum scores
     """
-    print("\n🔧 Building residual momentum signals...")
-    print(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days")
-    print(f"  Skip Period: {MOMENTUM_SKIP} days")
-    print(f"  Beta Estimation Window: {REGRESSION_LOOKBACK} days")
+    logger.info("\n🔧 Building residual momentum signals...")
+    logger.info(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days")
+    logger.info(f"  Skip Period: {MOMENTUM_SKIP} days")
+    logger.info(f"  Beta Estimation Window: {REGRESSION_LOOKBACK} days")
 
     # Load market proxy (XU100)
     if data_loader is not None:
@@ -184,14 +182,14 @@ def build_residual_momentum_signals(
             xu100_df['Date'] = pd.to_datetime(xu100_df['Date'])
             xu100_df = xu100_df.set_index('Date').sort_index()
             market_close = xu100_df['Close'] if 'Close' in xu100_df.columns else xu100_df['Open']
-            print("  Using XU100 as market proxy")
+            logger.info("  Using XU100 as market proxy")
         else:
             # Fallback: use equal-weighted average of all stocks
             market_close = close_df.mean(axis=1)
-            print("  Using equal-weighted market as proxy (XU100 not found)")
+            logger.info("  Using equal-weighted market as proxy (XU100 not found)")
     else:
         market_close = close_df.mean(axis=1)
-        print("  Using equal-weighted market as proxy")
+        logger.info("  Using equal-weighted market as proxy")
 
     # Align market to close_df index
     market_close = market_close.reindex(close_df.index).ffill()
@@ -207,9 +205,9 @@ def build_residual_momentum_signals(
     if not valid_scores.empty:
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.2f}, Std: {latest.std():.2f}")
-            print(f"  Latest scores - Min: {latest.min():.2f}, Max: {latest.max():.2f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.2f}, Std: {latest.std():.2f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.2f}, Max: {latest.max():.2f}")
 
-    print(f"  ✅ Residual momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Residual momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

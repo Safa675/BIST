@@ -12,21 +12,23 @@ Lower asset growth = Better signal score (conservative companies)
 Higher asset growth = Worse signal score (over-expanding companies)
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict
-import sys
+
+import numpy as np
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
+from Models.common.utils import (
     apply_lag,
+    coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -98,9 +100,9 @@ def build_asset_growth_signals(
         DataFrame (dates x tickers) with asset growth quality scores
         Higher score = Lower asset growth = Better quality (conservative management)
     """
-    print("\n🔧 Building asset growth signals...")
-    print("  Formula: Asset Growth = ΔTotal Assets / Total Assets")
-    print("  Lower asset growth = Conservative management = Higher quality")
+    logger.info("\n🔧 Building asset growth signals...")
+    logger.info("  Formula: Asset Growth = ΔTotal Assets / Total Assets")
+    logger.info("  Lower asset growth = Conservative management = Higher quality")
     
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
     
@@ -122,7 +124,7 @@ def build_asset_growth_signals(
                 panel[ticker] = lagged
                 count += 1
                 if count % 50 == 0:
-                    print(f"  Processed {count} tickers...")
+                    logger.info(f"  Processed {count} tickers...")
     
     result = pd.DataFrame(panel, index=dates)
     
@@ -130,12 +132,12 @@ def build_asset_growth_signals(
     if not result.empty:
         latest = result.iloc[-1].dropna()
         if len(latest) > 0:
-            print(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
-            print(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
+            logger.info(f"  Latest scores - Mean: {latest.mean():.4f}, Std: {latest.std():.4f}")
+            logger.info(f"  Latest scores - Min: {latest.min():.4f}, Max: {latest.max():.4f}")
             
             # Show top 5 quality stocks (highest scores = lowest asset growth)
             top_5 = latest.nlargest(5)
-            print(f"  Top 5 conservative stocks (lowest asset growth): {', '.join(top_5.index.tolist())}")
+            logger.info(f"  Top 5 conservative stocks (lowest asset growth): {', '.join(top_5.index.tolist())}")
     
-    print(f"  ✅ Asset growth signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Asset growth signals: {result.shape[0]} days × {result.shape[1]} tickers")
     return result

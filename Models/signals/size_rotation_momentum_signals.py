@@ -13,23 +13,22 @@ This is a more aggressive version of size_rotation that focuses purely
 on momentum within the winning size segment.
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
+import logging
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import pandas as pd
 
 # Import size rotation helpers
-from signals.size_rotation_signals import (
-    calculate_size_regime,
-    build_market_cap_panel,
-    build_liquidity_panel,
-    get_size_buckets_for_date,
+from Models.signals.size_rotation_signals import (
     RELATIVE_PERF_LOOKBACK,
-    SWITCH_THRESHOLD,
     SIZE_LIQUIDITY_QUANTILE,
+    SWITCH_THRESHOLD,
+    build_liquidity_panel,
+    build_market_cap_panel,
+    calculate_size_regime,
+    get_size_buckets_for_date,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -91,19 +90,19 @@ def build_size_rotation_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with rotation momentum scores
     """
-    print("\n🔧 Building size rotation momentum signals...")
-    print(f"  Size regime lookback: {RELATIVE_PERF_LOOKBACK} days")
-    print(f"  Momentum lookback: {MOMENTUM_LOOKBACK} days (skip {MOMENTUM_SKIP})")
-    print(f"  Switch threshold: ±{SWITCH_THRESHOLD}")
+    logger.info("\n🔧 Building size rotation momentum signals...")
+    logger.info(f"  Size regime lookback: {RELATIVE_PERF_LOOKBACK} days")
+    logger.info(f"  Momentum lookback: {MOMENTUM_LOOKBACK} days (skip {MOMENTUM_SKIP})")
+    logger.info(f"  Switch threshold: ±{SWITCH_THRESHOLD}")
 
     # Build dynamic size inputs
-    print("  Building market-cap panel (SERMAYE × price)...")
+    logger.info("  Building market-cap panel (SERMAYE × price)...")
     market_cap_df = build_market_cap_panel(close_df, close_df.index, data_loader)
-    print("  Loading liquidity panel...")
+    logger.info("  Loading liquidity panel...")
     liquidity_df = build_liquidity_panel(close_df, close_df.index, data_loader)
 
     # Calculate size regime
-    print("  Calculating size regime...")
+    logger.info("  Calculating size regime...")
     size_regime = calculate_size_regime(
         close_df,
         market_cap_df=market_cap_df,
@@ -114,10 +113,10 @@ def build_size_rotation_momentum_signals(
     # Show current regime
     latest_regime = size_regime['regime'].iloc[-1] if not size_regime.empty else 'unknown'
     latest_z = size_regime['z_score'].iloc[-1] if not size_regime.empty else 0
-    print(f"  Current regime: {latest_regime.upper()} (z-score: {latest_z:.2f})")
+    logger.info(f"  Current regime: {latest_regime.upper()} (z-score: {latest_z:.2f})")
 
     # Calculate momentum
-    print("  Calculating momentum...")
+    logger.info("  Calculating momentum...")
     momentum = calculate_momentum(close_df)
 
     # Show latest bucket counts
@@ -129,11 +128,11 @@ def build_size_rotation_momentum_signals(
         latest_liq,
         liquidity_quantile=SIZE_LIQUIDITY_QUANTILE,
     )
-    print(f"  Latest liquid universe: {len(liquid_latest)}")
-    print(f"  Latest large caps (top 10%): {len(large_latest)}, small caps (bottom 10%): {len(small_latest)}")
+    logger.info(f"  Latest liquid universe: {len(liquid_latest)}")
+    logger.info(f"  Latest large caps (top 10%): {len(large_latest)}, small caps (bottom 10%): {len(small_latest)}")
 
     # Build rotation-aware momentum scores
-    print("  Building rotation-aware scores...")
+    logger.info("  Building rotation-aware scores...")
     scores = pd.DataFrame(index=close_df.index, columns=close_df.columns, dtype=float)
 
     for date in close_df.index:
@@ -189,10 +188,10 @@ def build_size_rotation_momentum_signals(
     latest = result.iloc[-1]
     nonzero = latest[latest > 0]
     if len(nonzero) > 0:
-        print(f"  Latest non-zero scores: {len(nonzero)} tickers")
+        logger.info(f"  Latest non-zero scores: {len(nonzero)} tickers")
         top_5 = nonzero.nlargest(5)
-        print(f"  Top 5: {', '.join(top_5.index.tolist())}")
+        logger.info(f"  Top 5: {', '.join(top_5.index.tolist())}")
 
-    print(f"  ✅ Size rotation momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Size rotation momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

@@ -22,20 +22,24 @@ The key insight: Don't fight the tape. If large caps are leading,
 ride that wave instead of hoping small caps will catch up.
 """
 
-import pandas as pd
+import logging
+from typing import Tuple
+
 import numpy as np
-from pathlib import Path
-from typing import Tuple, Set
-import sys
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
+from Models.common.market_cap_utils import (
+    SIZE_LIQUIDITY_QUANTILE,
+    get_size_buckets_for_date,
+)
+from Models.common.utils import (
     assert_has_cross_section,
     assert_panel_not_constant,
     raise_signal_data_error,
 )
 
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # SIZE ROTATION PARAMETERS
@@ -54,9 +58,6 @@ MOMENTUM_LOOKBACK = 126  # 6 months
 LARGE_CAP_PERCENTILE = 90  # Top 10% by market cap = large caps
 SMALL_CAP_PERCENTILE = 10  # Bottom 10% by market cap = small caps
 
-# Liquidity filter to avoid microcaps in both regime and scoring calculations
-SIZE_LIQUIDITY_QUANTILE = 0.25
-
 # Minimum required names in each bucket
 MIN_BUCKET_NAMES = 10
 
@@ -70,23 +71,59 @@ def build_market_cap_panel(
     dates: pd.DatetimeIndex,
     data_loader=None,
 ) -> pd.DataFrame:
-    """Build Date x Ticker market-cap panel using SERMAYE (shares outstanding)."""
-    panel = pd.DataFrame(np.nan, index=dates, columns=close_df.columns, dtype=float)
+    """Build Date x Ticker market-cap panel using vectorized shares x price."""
+    dates = pd.DatetimeIndex(dates)
+    close_aligned = close_df.reindex(index=dates)
+    panel = pd.DataFrame(np.nan, index=dates, columns=close_aligned.columns, dtype=float)
     if data_loader is None:
         return panel
 
-    for idx, ticker in enumerate(close_df.columns, start=1):
-        shares = data_loader.load_shares_outstanding(ticker)
-        if shares is None or shares.empty:
-            continue
+    panel_cache = getattr(data_loader, "panel_cache", None)
+    cache_key = None
+    if panel_cache is not None:
+        cache_key = panel_cache.make_key(
+            "market_cap",
+            start=dates[0] if len(dates) else None,
+            end=dates[-1] if len(dates) else None,
+            rows=int(len(dates)),
+            tickers=tuple(str(col) for col in close_aligned.columns),
+        )
+        cached_panel = panel_cache.get(cache_key)
+        if isinstance(cached_panel, pd.DataFrame):
+            return cached_panel
 
-        shares = shares.sort_index()
-        shares = shares[~shares.index.duplicated(keep="last")]
-        shares = shares.reindex(dates, method="ffill")
-        panel[ticker] = close_df[ticker].reindex(dates) * shares
+    shares_panel = data_loader.load_shares_outstanding_panel()
+    missing_tickers = list(close_aligned.columns)
 
-        if idx % 100 == 0:
-            print(f"  Market-cap panel progress: {idx}/{len(close_df.columns)}")
+    if shares_panel is not None and not shares_panel.empty:
+        shares_aligned = shares_panel.reindex(index=dates, columns=close_aligned.columns).ffill()
+        panel_values = np.multiply(
+            close_aligned.to_numpy(dtype=np.float64, copy=False),
+            shares_aligned.to_numpy(dtype=np.float64, copy=False),
+        )
+        panel = pd.DataFrame(panel_values, index=dates, columns=close_aligned.columns)
+
+        covered_tickers = shares_aligned.notna().any(axis=0)
+        missing_tickers = covered_tickers.index[~covered_tickers].tolist()
+
+    # Fallback path for tickers absent from consolidated shares sources.
+    if missing_tickers:
+        logger.info(f"  Market-cap fallback for {len(missing_tickers)} tickers (missing consolidated shares)...")
+        for idx, ticker in enumerate(missing_tickers, start=1):
+            shares = data_loader.load_shares_outstanding(ticker)
+            if shares is None or shares.empty:
+                continue
+
+            shares = shares.sort_index()
+            shares = shares[~shares.index.duplicated(keep="last")]
+            shares = shares.reindex(dates, method="ffill")
+            panel[ticker] = close_aligned[ticker] * shares
+
+            if idx % 100 == 0 or idx == len(missing_tickers):
+                logger.info(f"  Market-cap fallback progress: {idx}/{len(missing_tickers)}")
+
+    if panel_cache is not None and cache_key is not None:
+        panel_cache.set(cache_key, panel)
 
     return panel
 
@@ -100,6 +137,20 @@ def build_liquidity_panel(
     if data_loader is None:
         return pd.DataFrame(np.nan, index=dates, columns=close_df.columns)
 
+    panel_cache = getattr(data_loader, "panel_cache", None)
+    cache_key = None
+    if panel_cache is not None:
+        cache_key = panel_cache.make_key(
+            "liquidity",
+            start=dates[0] if len(dates) else None,
+            end=dates[-1] if len(dates) else None,
+            rows=int(len(dates)),
+            tickers=tuple(str(col) for col in close_df.columns),
+        )
+        cached_panel = panel_cache.get(cache_key)
+        if isinstance(cached_panel, pd.DataFrame):
+            return cached_panel
+
     volume_df = getattr(data_loader, "_volume_df", None)
     if volume_df is None:
         try:
@@ -109,61 +160,10 @@ def build_liquidity_panel(
         except Exception:
             return pd.DataFrame(np.nan, index=dates, columns=close_df.columns)
 
-    return volume_df.reindex(index=dates, columns=close_df.columns)
-
-
-def get_size_buckets_for_date(
-    market_cap_row: pd.Series,
-    liquidity_row: pd.Series,
-    large_percentile: int = LARGE_CAP_PERCENTILE,
-    small_percentile: int = SMALL_CAP_PERCENTILE,
-    liquidity_quantile: float = SIZE_LIQUIDITY_QUANTILE,
-) -> tuple[Set[str], Set[str], Set[str]]:
-    """
-    Build liquid universe then split by market-cap deciles.
-
-    Returns:
-        (liquid_universe, small_caps, large_caps)
-    """
-    if market_cap_row is None or market_cap_row.empty:
-        return set(), set(), set()
-
-    if liquidity_row is None or liquidity_row.empty:
-        combined = pd.DataFrame({"mcap": market_cap_row}).dropna()
-    else:
-        combined = pd.concat(
-            [market_cap_row.rename("mcap"), liquidity_row.rename("liq")],
-            axis=1,
-            join="inner",
-        ).dropna()
-
-    if combined.empty:
-        return set(), set(), set()
-
-    if "liq" in combined.columns:
-        liq_threshold = combined["liq"].quantile(liquidity_quantile)
-        liquid_df = combined[combined["liq"] >= liq_threshold]
-    else:
-        liquid_df = combined
-
-    if len(liquid_df) < 2 * MIN_BUCKET_NAMES:
-        return set(liquid_df.index), set(), set()
-
-    large_thr = liquid_df["mcap"].quantile(large_percentile / 100.0)
-    small_thr = liquid_df["mcap"].quantile(small_percentile / 100.0)
-
-    large_caps = set(liquid_df[liquid_df["mcap"] >= large_thr].index)
-    small_caps = set(liquid_df[liquid_df["mcap"] <= small_thr].index) - large_caps
-
-    # Fallback if ties collapse one bucket
-    if len(large_caps) < MIN_BUCKET_NAMES or len(small_caps) < MIN_BUCKET_NAMES:
-        ordered = liquid_df["mcap"].sort_values()
-        n = max(MIN_BUCKET_NAMES, int(len(ordered) * 0.10))
-        n = min(n, len(ordered) // 2)
-        small_caps = set(ordered.head(n).index)
-        large_caps = set(ordered.tail(n).index) - small_caps
-
-    return set(liquid_df.index), small_caps, large_caps
+    aligned = volume_df.reindex(index=dates, columns=close_df.columns)
+    if panel_cache is not None and cache_key is not None:
+        panel_cache.set(cache_key, aligned)
+    return aligned
 
 
 # ============================================================================
@@ -426,10 +426,10 @@ def build_size_rotation_signals(
     Returns:
         DataFrame (dates x tickers) with size rotation scores
     """
-    print("\n🔧 Building size rotation signals...")
-    print(f"  Relative performance lookback: {RELATIVE_PERF_LOOKBACK} days")
-    print(f"  Switch threshold (z-score): ±{SWITCH_THRESHOLD}")
-    print(f"  Momentum lookback: {MOMENTUM_LOOKBACK} days")
+    logger.info("\n🔧 Building size rotation signals...")
+    logger.info(f"  Relative performance lookback: {RELATIVE_PERF_LOOKBACK} days")
+    logger.info(f"  Switch threshold (z-score): ±{SWITCH_THRESHOLD}")
+    logger.info(f"  Momentum lookback: {MOMENTUM_LOOKBACK} days")
 
     if data_loader is None:
         raise_signal_data_error(
@@ -438,7 +438,7 @@ def build_size_rotation_signals(
         )
 
     # Build market-cap and liquidity panels
-    print("  Building market-cap panel (SERMAYE × price)...")
+    logger.info("  Building market-cap panel (SERMAYE × price)...")
     market_cap_df = build_market_cap_panel(close_df, close_df.index, data_loader)
     assert_has_cross_section(
         market_cap_df,
@@ -446,11 +446,11 @@ def build_size_rotation_signals(
         "market-cap panel",
         min_valid_tickers=2 * MIN_BUCKET_NAMES,
     )
-    print("  Loading liquidity panel...")
+    logger.info("  Loading liquidity panel...")
     liquidity_df = build_liquidity_panel(close_df, close_df.index, data_loader)
 
     # Calculate size regime
-    print("  Calculating size regime...")
+    logger.info("  Calculating size regime...")
     size_regime = calculate_size_regime(
         close_df,
         market_cap_df=market_cap_df,
@@ -470,18 +470,18 @@ def build_size_rotation_signals(
     if pd.isna(latest_regime):
         latest_regime = "unknown"
     latest_z = size_regime['z_score'].iloc[-1] if not size_regime.empty else 0
-    print(f"  Current regime: {latest_regime.upper()} (z-score: {latest_z:.2f})")
+    logger.info(f"  Current regime: {latest_regime.upper()} (z-score: {latest_z:.2f})")
 
     # Regime distribution
     if not size_regime.empty:
         regime_counts = size_regime['regime'].value_counts()
-        print(f"  Historical regime distribution:")
+        logger.info("  Historical regime distribution:")
         for regime, count in regime_counts.items():
             pct = count / len(size_regime) * 100
-            print(f"    {regime}: {count} days ({pct:.1f}%)")
+            logger.info(f"    {regime}: {count} days ({pct:.1f}%)")
 
     # Calculate rotation scores
-    print("  Calculating rotation-adjusted scores...")
+    logger.info("  Calculating rotation-adjusted scores...")
     scores = calculate_size_rotation_scores(
         close_df,
         size_regime,
@@ -510,7 +510,7 @@ def build_size_rotation_signals(
     # Summary stats
     latest = result.iloc[-1].dropna()
     if len(latest) > 0:
-        print(f"  Latest scores - Mean: {latest.mean():.1f}, Std: {latest.std():.1f}")
+        logger.info(f"  Latest scores - Mean: {latest.mean():.1f}, Std: {latest.std():.1f}")
 
         # Show top picks by regime from current dynamic buckets
         mcap_latest = market_cap_df.loc[latest.name] if latest.name in market_cap_df.index else pd.Series(dtype=float)
@@ -524,15 +524,15 @@ def build_size_rotation_signals(
         if latest_regime == 'large_cap' and large_caps_latest:
             large_cap_scores = latest.reindex(list(large_caps_latest)).dropna()
             top_5 = large_cap_scores.nlargest(5)
-            print(f"  Top 5 large caps (favored regime): {', '.join(top_5.index.tolist())}")
+            logger.info(f"  Top 5 large caps (favored regime): {', '.join(top_5.index.tolist())}")
         elif latest_regime == 'small_cap' and small_caps_latest:
             small_cap_scores = latest.reindex(list(small_caps_latest)).dropna()
             top_5 = small_cap_scores.nlargest(5)
-            print(f"  Top 5 small caps (favored regime): {', '.join(top_5.index.tolist())}")
+            logger.info(f"  Top 5 small caps (favored regime): {', '.join(top_5.index.tolist())}")
         else:
             top_5 = latest.nlargest(5)
-            print(f"  Top 5 overall (neutral regime): {', '.join(top_5.index.tolist())}")
+            logger.info(f"  Top 5 overall (neutral regime): {', '.join(top_5.index.tolist())}")
 
-    print(f"  ✅ Size rotation signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Size rotation signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

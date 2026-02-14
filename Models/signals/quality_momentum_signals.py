@@ -17,20 +17,23 @@ Scoring:
 - Both components must be above median (50th percentile) to get a non-zero score
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-import sys
+
+import numpy as np
+import pandas as pd
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
-    pick_row,
-    coerce_quarter_cols,
+from Models.common.utils import (
     apply_lag,
+    apply_staleness_weighting,
+    coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Fundamental data keys
@@ -142,20 +145,20 @@ def build_quality_momentum_signals(
     Returns:
         DataFrame (dates x tickers) with quality momentum scores (0-100)
     """
-    print("\n🔧 Building quality momentum signals...")
-    print("  Momentum lookback: 126 days (6 months)")
-    print("  Profitability: ROA (40%) + ROE (40%) + Operating Margin (20%)")
-    print("  Weighting: Momentum (60%) + Profitability (40%)")
+    logger.info("\n🔧 Building quality momentum signals...")
+    logger.info("  Momentum lookback: 126 days (6 months)")
+    logger.info("  Profitability: ROA (40%) + ROE (40%) + Operating Margin (20%)")
+    logger.info("  Weighting: Momentum (60%) + Profitability (40%)")
     
     # 1. Calculate 6-month momentum
-    print("  Calculating momentum...")
+    logger.info("  Calculating momentum...")
     momentum_6m = close_df.pct_change(126)
     
     # Rank momentum (0-100 scale)
     momentum_rank = momentum_6m.rank(axis=1, pct=True) * 100
     
     # 2. Calculate profitability for all tickers
-    print("  Calculating profitability...")
+    logger.info("  Calculating profitability...")
     fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
     
     profitability_panel = {}
@@ -176,16 +179,16 @@ def build_quality_momentum_signals(
                 profitability_panel[ticker] = lagged
                 count += 1
                 if count % 50 == 0:
-                    print(f"    Processed {count} tickers...")
+                    logger.info(f"    Processed {count} tickers...")
     
     profitability_df = pd.DataFrame(profitability_panel, index=dates)
-    print(f"  ✅ Profitability: {profitability_df.shape[0]} days × {profitability_df.shape[1]} tickers")
+    logger.info(f"  ✅ Profitability: {profitability_df.shape[0]} days × {profitability_df.shape[1]} tickers")
     
     # Rank profitability (0-100 scale)
     profitability_rank = profitability_df.rank(axis=1, pct=True) * 100
     
     # 3. Combine momentum and profitability
-    print("  Combining signals...")
+    logger.info("  Combining signals...")
     
     # Align columns
     common_tickers = momentum_rank.columns.intersection(profitability_rank.columns)
@@ -212,15 +215,18 @@ def build_quality_momentum_signals(
     # Summary stats
     valid_scores = result[result > 0].stack()
     if len(valid_scores) > 0:
-        print(f"  Valid scores - Mean: {valid_scores.mean():.1f}, Std: {valid_scores.std():.1f}")
-        print(f"  Valid scores - Min: {valid_scores.min():.1f}, Max: {valid_scores.max():.1f}")
+        logger.info(f"  Valid scores - Mean: {valid_scores.mean():.1f}, Std: {valid_scores.std():.1f}")
+        logger.info(f"  Valid scores - Min: {valid_scores.min():.1f}, Max: {valid_scores.max():.1f}")
         
         # Show top quality momentum stocks
         latest = result.iloc[-1]
         top_5 = latest.nlargest(5)
         if len(top_5[top_5 > 0]) > 0:
-            print(f"  Top 5 quality momentum stocks: {', '.join(top_5[top_5 > 0].index.tolist())}")
+            logger.info(f"  Top 5 quality momentum stocks: {', '.join(top_5[top_5 > 0].index.tolist())}")
     
-    print(f"  ✅ Quality momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    # Apply staleness-based down-weighting
+    result = apply_staleness_weighting(result)
+
+    logger.info(f"  ✅ Quality momentum signals: {result.shape[0]} days × {result.shape[1]} tickers")
     
     return result

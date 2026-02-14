@@ -12,19 +12,23 @@ Based on Quantpedia strategy: Momentum Factor Combined with Asset Growth Effect
 Signal: Momentum score for stocks in top asset growth decile
 """
 
-import pandas as pd
-import numpy as np
+import logging
 from pathlib import Path
-from typing import Dict, Optional
-import sys
+from typing import Dict
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.utils import (
+import numpy as np
+import pandas as pd
+
+from Models.common.utils import (
+    apply_lag,
+    apply_staleness_weighting,
     coerce_quarter_cols,
     get_consolidated_sheet,
+    pick_row,
     pick_row_from_sheet,
-    apply_lag,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -51,6 +55,7 @@ def calculate_asset_growth_for_ticker(
     ticker: str,
     data_loader,
     fundamentals_parquet: pd.DataFrame = None,
+    xlsx_path: Path | None = None,
 ) -> pd.Series:
     """
     Calculate YoY asset growth for a ticker.
@@ -60,14 +65,26 @@ def calculate_asset_growth_for_ticker(
     Returns:
         pd.Series: Asset growth indexed by quarter
     """
-    if fundamentals_parquet is None:
-        return pd.Series(dtype=float)
+    del data_loader  # Kept for backward-compatible signature.
 
-    bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
+    use_parquet = fundamentals_parquet is not None
+    if use_parquet:
+        bs = get_consolidated_sheet(fundamentals_parquet, ticker, BALANCE_SHEET)
+    else:
+        bs = pd.DataFrame()
+
+    if bs.empty and xlsx_path is not None:
+        try:
+            bs = pd.read_excel(xlsx_path, sheet_name=BALANCE_SHEET)
+            use_parquet = False
+        except Exception:
+            return pd.Series(dtype=float)
+
     if bs.empty:
         return pd.Series(dtype=float)
 
-    assets_row = pick_row_from_sheet(bs, TOTAL_ASSETS_KEYS)
+    row_picker = pick_row_from_sheet if use_parquet else pick_row
+    assets_row = row_picker(bs, TOTAL_ASSETS_KEYS)
     if assets_row is None:
         return pd.Series(dtype=float)
 
@@ -109,11 +126,11 @@ def build_momentum_asset_growth_signals(
     Returns:
         DataFrame (dates x tickers) with combined scores
     """
-    print("\n🔧 Building Momentum + Asset Growth signals...")
-    print(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days, Skip: {MOMENTUM_SKIP} days")
-    print(f"  Asset Growth Top Percentile: {ASSET_GROWTH_TOP_PERCENTILE*100:.0f}%")
+    logger.info("\n🔧 Building Momentum + Asset Growth signals...")
+    logger.info(f"  Momentum Lookback: {MOMENTUM_LOOKBACK} days, Skip: {MOMENTUM_SKIP} days")
+    logger.info(f"  Asset Growth Top Percentile: {ASSET_GROWTH_TOP_PERCENTILE*100:.0f}%")
 
-    fundamentals_parquet = data_loader.load_fundamentals_parquet()
+    fundamentals_parquet = data_loader.load_fundamentals_parquet() if data_loader is not None else None
 
     # Calculate asset growth for all tickers
     asset_growth_panel = {}
@@ -123,7 +140,14 @@ def build_momentum_asset_growth_signals(
         if ticker not in close_df.columns:
             continue
 
-        ag = calculate_asset_growth_for_ticker(ticker, data_loader, fundamentals_parquet)
+        fund_data = fundamentals.get(ticker, {}) if isinstance(fundamentals, dict) else {}
+        xlsx_path = fund_data.get("path") if isinstance(fund_data, dict) else None
+        ag = calculate_asset_growth_for_ticker(
+            ticker,
+            data_loader,
+            fundamentals_parquet,
+            xlsx_path=xlsx_path,
+        )
         if not ag.empty:
             lagged = apply_lag(ag, dates)
             if not lagged.empty:
@@ -131,7 +155,7 @@ def build_momentum_asset_growth_signals(
 
         count += 1
         if count % 50 == 0:
-            print(f"  Processed {count} tickers for asset growth...")
+            logger.info(f"  Processed {count} tickers for asset growth...")
 
     # Build asset growth DataFrame
     asset_growth_df = pd.DataFrame(asset_growth_panel, index=dates)
@@ -141,7 +165,7 @@ def build_momentum_asset_growth_signals(
     momentum_df = momentum.reindex(dates)
 
     # Cross-sectional ranking
-    print("  Calculating cross-sectional ranks...")
+    logger.info("  Calculating cross-sectional ranks...")
 
     # Asset growth rank (higher growth = higher rank)
     ag_rank = asset_growth_df.rank(axis=1, pct=True)
@@ -155,7 +179,7 @@ def build_momentum_asset_growth_signals(
     # Combined score:
     # For high-growth stocks: momentum rank (they get scored by momentum)
     # For low-growth stocks: penalized score (lower priority)
-    print("  Combining asset growth and momentum signals...")
+    logger.info("  Combining asset growth and momentum signals...")
 
     combined = pd.DataFrame(index=dates, columns=close_df.columns, dtype=float)
 
@@ -180,8 +204,11 @@ def build_momentum_asset_growth_signals(
         latest = valid_scores.iloc[-1].dropna()
         if len(latest) > 0:
             n_high_growth = (latest > 0.7).sum()  # Approximate high-growth count
-            print(f"  High-growth stocks (latest): ~{n_high_growth}")
+            logger.info(f"  High-growth stocks (latest): ~{n_high_growth}")
 
-    print(f"  ✅ Momentum + Asset Growth signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    # Apply staleness-based down-weighting
+    result = apply_staleness_weighting(result)
+
+    logger.info(f"  ✅ Momentum + Asset Growth signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

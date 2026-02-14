@@ -10,11 +10,13 @@ What it does:
 Run: python is_yatirim_fetcher.py
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from isyatirimhisse import fetch_stock_data
+logger = logging.getLogger(__name__)
 
 
 START_DATE = "01-01-2016"
@@ -195,32 +197,32 @@ def main() -> None:
     successes: Dict[str, pd.DataFrame] = {}
     errors: Dict[str, str] = {}
 
-    print(f"Fetching {len(TICKERS)} tickers from {START_DATE} to {END_DATE}...")
+    logger.info(f"Fetching {len(TICKERS)} tickers from {START_DATE} to {END_DATE}...")
     for i, ticker in enumerate(TICKERS, start=1):
-        print(f"[{i}/{len(TICKERS)}] {ticker} ...", end="", flush=True)
+        logger.info(f"[{i}/{len(TICKERS)}] {ticker} ...")
         daily, quarterly, err = fetch_and_process(ticker)
         if err:
             errors[ticker] = err
-            print(f" failed ({err})")
+            logger.info(f" failed ({err})")
             continue
 
         save_outputs(ticker, daily, quarterly)
         successes[ticker] = quarterly
-        print(f" ok (daily {len(daily):,} rows, quarterly {len(quarterly):,} rows)")
+        logger.info(f" ok (daily {len(daily):,} rows, quarterly {len(quarterly):,} rows)")
 
     if successes:
         combined = pd.concat(successes.values(), axis=1)
         combined.index.name = "QuarterEnd"
         combined.to_csv(OUTPUT_DIR / "all_tickers_quarterly_2016_2026.csv", encoding="utf-8-sig")
-        print(f"\nCombined quarterly saved to {OUTPUT_DIR/'all_tickers_quarterly_2016_2026.csv'} "
+        logger.info(f"\nCombined quarterly saved to {OUTPUT_DIR/'all_tickers_quarterly_2016_2026.csv'} "
               f"with shape {combined.shape}")
 
     if errors:
-        print("\nCompleted with errors:")
+        logger.info("\nCompleted with errors:")
         for t, msg in errors.items():
-            print(f"- {t}: {msg}")
+            logger.info(f"- {t}: {msg}")
     else:
-        print("\nCompleted without errors.")
+        logger.info("\nCompleted without errors.")
 
 
 if __name__ == "__main__":

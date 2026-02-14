@@ -10,15 +10,12 @@ Based on Quantpedia strategy: Low Volatility Factor Effect in Stocks
 Signal: Negative of rolling volatility (lower vol = higher signal)
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Optional
-import sys
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
+logger = logging.getLogger(__name__)
 # ============================================================================
 # LOW VOLATILITY PARAMETERS
 # ============================================================================
@@ -45,7 +42,7 @@ def calculate_daily_volatility(
     Returns:
         pd.DataFrame: Rolling volatility for each stock
     """
-    daily_returns = close_df.pct_change(fill_method=None)
+    daily_returns = close_df.pct_change()
     rolling_vol = daily_returns.rolling(lookback, min_periods=lookback // 2).std()
     return rolling_vol
 
@@ -94,17 +91,13 @@ def calculate_downside_volatility(
     Returns:
         pd.DataFrame: Rolling downside volatility for each stock
     """
-    daily_returns = close_df.pct_change(fill_method=None)
-
-    def calc_downside_vol(window):
-        negative_rets = window[window < 0]
-        if len(negative_rets) > 2:
-            return negative_rets.std()
-        return np.nan
-
-    downside_vol = daily_returns.rolling(lookback, min_periods=lookback // 2).apply(
-        calc_downside_vol, raw=False
-    )
+    daily_returns = close_df.pct_change()
+    min_periods = lookback // 2
+    negative_only = daily_returns.where(daily_returns < 0.0)
+    total_counts = daily_returns.rolling(lookback, min_periods=min_periods).count()
+    negative_counts = negative_only.rolling(lookback, min_periods=1).count()
+    downside_vol = negative_only.rolling(lookback, min_periods=1).std()
+    downside_vol = downside_vol.where((total_counts >= min_periods) & (negative_counts > 2))
 
     return downside_vol
 
@@ -166,9 +159,9 @@ def build_low_volatility_signals(
     Returns:
         DataFrame (dates x tickers) with low volatility scores
     """
-    print("\n🔧 Building low volatility signals...")
-    print(f"  Volatility Lookback: {VOLATILITY_LOOKBACK} days")
-    print(f"  Using Weekly Returns: {WEEKLY_VOLATILITY}")
+    logger.info("\n🔧 Building low volatility signals...")
+    logger.info(f"  Volatility Lookback: {VOLATILITY_LOOKBACK} days")
+    logger.info(f"  Using Weekly Returns: {WEEKLY_VOLATILITY}")
 
     # Calculate low volatility scores
     low_vol_scores = calculate_low_volatility_scores(close_df)
@@ -183,9 +176,9 @@ def build_low_volatility_signals(
         if len(latest) > 0:
             # Convert back to positive vol for display
             latest_vol = -latest
-            print(f"  Latest volatility range: {latest_vol.min()*100:.2f}% to {latest_vol.max()*100:.2f}%")
-            print(f"  Median volatility: {latest_vol.median()*100:.2f}%")
+            logger.info(f"  Latest volatility range: {latest_vol.min()*100:.2f}% to {latest_vol.max()*100:.2f}%")
+            logger.info(f"  Median volatility: {latest_vol.median()*100:.2f}%")
 
-    print(f"  ✅ Low volatility signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"  ✅ Low volatility signals: {result.shape[0]} days × {result.shape[1]} tickers")
 
     return result

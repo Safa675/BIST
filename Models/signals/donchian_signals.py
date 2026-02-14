@@ -12,12 +12,12 @@ Score interpretation:
 - -100: At lower band (breakdown/sell signal)
 """
 
-import pandas as pd
+import logging
+
 import numpy as np
-from pathlib import Path
-from typing import Dict
+import pandas as pd
 
-
+logger = logging.getLogger(__name__)
 def build_donchian_signals(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
@@ -47,13 +47,11 @@ def build_donchian_signals(
         - -50: Price in lower half of channel (bearish)
         - -100: Price at lower band (breakdown, sell signal)
     """
-    print(f"\n🔧 Building {lookback}-day Donchian Channel signals...")
+    logger.info(f"\n🔧 Building {lookback}-day Donchian Channel signals...")
     
     # Calculate Donchian bands (shift by 1 to avoid lookahead bias)
     upper_band = high_df.rolling(lookback, min_periods=lookback).max().shift(1)
     lower_band = low_df.rolling(lookback, min_periods=lookback).min().shift(1)
-    middle_band = (upper_band + lower_band) / 2
-    
     # Calculate channel width
     channel_width = upper_band - lower_band
     
@@ -76,7 +74,7 @@ def build_donchian_signals(
     total_count = result.shape[0] * result.shape[1]
     coverage = valid_count / total_count if total_count > 0 else 0
     
-    print(f"  ✅ Donchian signals: {result.shape[0]} days × {result.shape[1]} tickers")
-    print(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
+    logger.info(f"  ✅ Donchian signals: {result.shape[0]} days × {result.shape[1]} tickers")
+    logger.info(f"     Coverage: {coverage*100:.1f}% ({valid_count:,} / {total_count:,})")
     
     return result
